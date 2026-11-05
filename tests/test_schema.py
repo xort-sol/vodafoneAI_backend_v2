@@ -188,3 +188,38 @@ def test_a_number_can_be_several_leads(conn):
     # test campaigns ring one phone many times
     conn.execute("insert into leads (phone) values ('+353857180577'), ('+353857180577')")
     assert conn.execute("select count(*) from leads where phone = '+353857180577'").fetchone()[0] == 2
+
+
+@pytest.fixture
+def users(conn):
+    return {role: new_user(conn, role) for role in ROLES}
+
+
+def test_salesperson_can_set_sales_status_but_not_dialler_state(conn, as_user, users):
+    lead_id = conn.execute("insert into leads (phone) values ('+353870000001') returning id").fetchone()[0]
+    as_user(conn, users["salesperson"])
+    assert conn.execute("update leads set sales_status = 'Converted' where id = %s", [lead_id]).rowcount == 1
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        conn.execute("update leads set attempts = 0 where id = %s", [lead_id])
+
+
+def test_analyst_cannot_change_leads(conn, as_user, users):
+    lead_id = conn.execute("insert into leads (phone) values ('+353870000002') returning id").fetchone()[0]
+    as_user(conn, users["analyst"])
+    assert conn.execute("update leads set sales_status = 'Hot' where id = %s", [lead_id]).rowcount == 0
+
+
+def test_every_role_can_read_team_names(conn, as_user, users):
+    as_user(conn, users["analyst"])
+    assert conn.execute("select count(*) from profiles").fetchone()[0] >= 4
+
+
+def test_calling_hours_must_end_after_they_start(conn):
+    with pytest.raises(psycopg.errors.CheckViolation):
+        conn.execute("insert into campaigns (name, calling_hours_start, calling_hours_end) values ('x', '22:00', '06:00')")
+
+
+def test_sellers_add_suppression_and_managers_remove_it(conn, as_user, users):
+    as_user(conn, users["salesperson"])
+    assert allowed(conn, "insert into suppression (phone, source) values ('+353870000003', 'manual')", [])
+    assert conn.execute("delete from suppression where phone = '+353870000003'").rowcount == 0

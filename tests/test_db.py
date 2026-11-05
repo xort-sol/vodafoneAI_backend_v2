@@ -73,7 +73,7 @@ def add_lead(test_db, phone="+353870000001") -> int:
     with psycopg.connect(test_db) as c:
         c.execute("truncate leads restart identity cascade")
         # as the dialler leaves it: claimed, with this attempt already counted
-        sql = "insert into leads (phone, status, attempts) values (%s, 'dialling', 1) returning id"
+        sql = "insert into leads (phone, status, attempts, consent) values (%s, 'dialling', 1, true) returning id"
         return c.execute(sql, [phone]).fetchone()[0]
 
 

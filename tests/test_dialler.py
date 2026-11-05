@@ -49,7 +49,7 @@ def campaign(test_db):
         c.execute("insert into campaigns (name, status, daily_cap) values ('c', 'running', 10)")
 
     def add(phone, **cols):
-        cols = {"campaign_id": 1, "phone": phone, **cols}
+        cols = {"campaign_id": 1, "phone": phone, "consent": True, **cols}
         with psycopg.connect(test_db, autocommit=True) as c:
             sql = f"insert into leads ({', '.join(cols)}) values ({', '.join(['%s'] * len(cols))}) returning id"
             return c.execute(sql, list(cols.values())).fetchone()[0]
