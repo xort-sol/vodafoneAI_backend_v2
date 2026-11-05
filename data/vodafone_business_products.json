@@ -1,0 +1,122 @@
+[
+  {
+    "category": "Mobile - SIM only",
+    "name": "RED Business Unlimited Sim Only",
+    "price": "€25/month for first 6 months (ex VAT)",
+    "price_after_promo": "€35/month thereafter",
+    "contract": "12 months",
+    "description": "Unlimited data at fastest speed available; unlimited any-network calls and texts incl. EU; 250 international minutes and texts; 5G ready",
+    "notes": "Price rises €2.03/month ex VAT each April",
+    "source_url": "https://www.vodafone.ie/business/mobile-plans"
+  },
+  {
+    "category": "Mobile - with phone",
+    "name": "RED Business Lite",
+    "price": "€45/month (ex VAT)",
+    "price_after_promo": "",
+    "contract": "Not stated",
+    "description": "Unlimited data at fastest speed available; unlimited any-network calls and texts; 100 international minutes and texts",
+    "notes": "Choose a phone; price rises €2.85/month ex VAT each April",
+    "source_url": "https://www.vodafone.ie/business/mobile-plans"
+  },
+  {
+    "category": "Mobile - with phone",
+    "name": "RED Business Unlimited",
+    "price": "€55/month (ex VAT)",
+    "price_after_promo": "",
+    "contract": "Not stated",
+    "description": "Unlimited data at fastest speed available; unlimited any-network calls and texts; 500 international minutes and texts",
+    "notes": "Choose a phone; price rises €2.85/month ex VAT each April",
+    "source_url": "https://www.vodafone.ie/business/mobile-plans"
+  },
+  {
+    "category": "Mobile - with phone",
+    "name": "RED Business Unlimited Max",
+    "price": "€80/month (ex VAT)",
+    "price_after_promo": "",
+    "contract": "Not stated",
+    "description": "Unlimited data at fastest speed available; unlimited any-network calls and texts incl. international; Smart Working Tools: Conferencing",
+    "notes": "Choose a phone; price rises €2.85/month ex VAT each April",
+    "source_url": "https://www.vodafone.ie/business/mobile-plans"
+  },
+  {
+    "category": "Broadband",
+    "name": "Business Broadband up to 500 Mbps",
+    "price": "€40/month",
+    "price_after_promo": "€60/month after (per card footnote)",
+    "contract": "24 months",
+    "description": "WiFi 5 modem; Super WiFi; Intelligent WiFi; suits a small business",
+    "notes": "Offer: save €10/month for first 12 months, discounted next 12; VAT basis not stated; price rises €2.85/month each April; free installation depends on location",
+    "source_url": "https://www.vodafone.ie/business/broadband"
+  },
+  {
+    "category": "Broadband",
+    "name": "Business Broadband up to 1 Gbps (Best value deal)",
+    "price": "€50/month",
+    "price_after_promo": "€70/month after (per card footnote)",
+    "contract": "24 months",
+    "description": "WiFi 7 modem; Super WiFi; Always connected; Intelligent WiFi; suits a medium-sized business",
+    "notes": "Same offer and notes as above",
+    "source_url": "https://www.vodafone.ie/business/broadband"
+  },
+  {
+    "category": "Broadband",
+    "name": "Business Broadband up to 2 Gbps (Ultimate speed)",
+    "price": "€65/month",
+    "price_after_promo": "€85/month after (per card footnote)",
+    "contract": "24 months",
+    "description": "WiFi 7 modem; Super WiFi; Always connected; Intelligent WiFi; suits a data-intensive business",
+    "notes": "Same offer and notes as above",
+    "source_url": "https://www.vodafone.ie/business/broadband"
+  },
+  {
+    "category": "Mobile broadband",
+    "name": "4G Unlimited Mobile Broadband",
+    "price": "€24.39/month for first 6 months (ex VAT)",
+    "price_after_promo": "€32.52/month thereafter",
+    "contract": "12 months",
+    "description": "Unlimited data; fastest 4G speeds; free delivery in ROI",
+    "notes": "Domestic use only; price rises €2.03/month each April",
+    "source_url": "https://www.vodafone.ie/business/mobile-broadband"
+  },
+  {
+    "category": "Mobile broadband",
+    "name": "5G Unlimited Mobile Broadband",
+    "price": "€32.52/month for first 6 months (ex VAT)",
+    "price_after_promo": "€36.59/month thereafter",
+    "contract": "12 months",
+    "description": "Unlimited data; superfast 5G/4G speeds; free delivery in ROI",
+    "notes": "Domestic use only; price rises €2.03/month each April",
+    "source_url": "https://www.vodafone.ie/business/mobile-broadband"
+  },
+  {
+    "category": "Mobile broadband",
+    "name": "30 Day Mobile Broadband Package",
+    "price": "€28.46/month (ex VAT)",
+    "price_after_promo": "",
+    "contract": "30-day rolling, cancel anytime",
+    "description": "300GB data/month; fastest 4G speeds; free delivery in ROI",
+    "notes": "Price rises €2.03/month each April",
+    "source_url": "https://www.vodafone.ie/business/mobile-broadband"
+  },
+  {
+    "category": "Phone",
+    "name": "Apple iPhone 17",
+    "price": "From free upfront (was €259)",
+    "price_after_promo": "",
+    "contract": "Not stated",
+    "description": "Switch & save up to €300",
+    "notes": "Bundled plan not stated on page; call 1800 855 696",
+    "source_url": "https://www.vodafone.ie/business/business-mobile-phones"
+  },
+  {
+    "category": "Phone",
+    "name": "Samsung S25",
+    "price": "From free upfront (was €99.99)",
+    "price_after_promo": "",
+    "contract": "Not stated",
+    "description": "Switch & save up to €150",
+    "notes": "Bundled plan not stated on page; call 1800 855 696",
+    "source_url": "https://www.vodafone.ie/business/business-mobile-phones"
+  }
+]
