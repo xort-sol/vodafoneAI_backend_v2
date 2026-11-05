@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 import psycopg
 from psycopg.rows import dict_row
+from psycopg.types.json import Json
 
 CALL_FIELDS = ["job_id", "room", "phone", "name", "company", "lead_id", "campaign_id", "outcome",
                "interested_services", "callback_time", "callback_at", "notes"]
@@ -68,7 +69,9 @@ def save_call(row: dict) -> None:
             status, next_at = next_lead_state(row["outcome"], attempts, row["callback_at"], now,
                                               max_attempts, timedelta(hours=retry_hours))
             conn.execute(
-                "update leads set status = %s, next_attempt_at = %s where id = %s", [status, next_at, row["lead_id"]]
+                """update leads set status = %s, next_attempt_at = %s, last_call_at = %s, next_follow_up = %s
+                   where id = %s""",
+                [status, next_at, now, row["callback_at"], row["lead_id"]],
             )
         if row.get("outcome") == "do_not_call" and row.get("phone"):
             conn.execute(
@@ -166,10 +169,15 @@ def save_analysis(job_id: str, analysis: dict | None, model: str, hot: bool) -> 
         call_id, lead_id, callback_at = call
         if analysis:
             conn.execute(
-                """insert into analyses (call_id, score, reason, objections, sentiment, next_step, brief, model)
-                   values (%s, %s, %s, %s, %s, %s, %s, %s) on conflict (call_id) do nothing""",
+                """insert into analyses (call_id, score, reason, objections, sentiment, next_step, brief, model, questions, unanswered, qualification)
+                   values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) on conflict (call_id) do nothing""",
                 [call_id, analysis["score"], analysis["reason"], analysis["objections"], analysis["sentiment"],
-                 analysis["next_step"], analysis["brief"], model],
+                 analysis["next_step"], analysis["brief"], model,
+                 analysis["questions"], analysis["unanswered"], Json(analysis["qualification"])],
+            )
+            conn.execute(
+                "update leads set score = %s, sentiment = %s, ai_summary = %s where id = %s",
+                [analysis["score"], analysis["sentiment"], analysis["brief"], lead_id],
             )
         if hot:
             conn.execute(

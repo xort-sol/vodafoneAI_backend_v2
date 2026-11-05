@@ -19,6 +19,9 @@ GOOD = {
     "sentiment": "positive",
     "next_step": "Call Thursday 10am about Business Broadband 500.",
     "brief": "Aoife, 8 staff, slow office internet; liked the 500 plan at forty euro; worried about price.",
+    "questions": ["Is it 5G?"],
+    "unanswered": [],
+    "qualification": {"need": 20, "budget": 15, "timeline": 10, "authority": 25},
 }
 
 LINES = [
@@ -55,6 +58,24 @@ def test_parse_accepts_json_inside_chatter_or_a_code_fence():
 )
 def test_parse_rejects_anything_off_schema(bad):
     assert parse_analysis(bad) is None
+
+
+def test_parse_keeps_questions_and_qualification():
+    reply = json.dumps({**GOOD, "unanswered": ["Porting?"],
+                        "qualification": {"need": 20, "budget": 15, "timeline": 10, "authority": 25}})
+    parsed = parse_analysis(reply)
+    assert parsed["questions"] == ["Is it 5G?"] and parsed["unanswered"] == ["Porting?"]
+    assert parsed["qualification"]["authority"] == 25
+
+
+@pytest.mark.parametrize(
+    "qualification",
+    [{"need": 26, "budget": 0, "timeline": 0, "authority": 0}, {"need": -1, "budget": 0, "timeline": 0, "authority": 0},
+     {"need": 1.5, "budget": 0, "timeline": 0, "authority": 0}, {"need": True, "budget": 0, "timeline": 0, "authority": 0},
+     {"need": 5, "budget": 0, "timeline": 0}, "high"],
+)
+def test_parse_rejects_bad_qualification(qualification):
+    assert parse_analysis(json.dumps({**GOOD, "qualification": qualification})) is None
 
 
 def test_parse_trims_an_overlong_brief():
@@ -116,6 +137,20 @@ async def test_hot_call_gets_an_analysis_and_one_inbox_task(call_rows, test_db):
     analyses, tasks = saved(test_db)
     assert [(s, m) for s, _, m in analyses] == [(82, "openai/gpt-4.1")]
     assert tasks == [("follow_up", True)]
+
+
+@pytest.mark.asyncio
+async def test_analysis_updates_the_lead_summary(call_rows, test_db):
+    with psycopg.connect(test_db) as c:
+        c.execute("truncate leads restart identity cascade")
+        lead_id = c.execute("insert into leads (phone, status, attempts, consent) values ('+353870000001', 'dialling', 1, true) returning id").fetchone()[0]
+    db.save_call({"job_id": "j1", "lead_id": lead_id, "outcome": "interested"})
+    await analyse_call("j1", LINES, "interested", ask=FakeLLM(json.dumps({**GOOD, "score": 80})))
+    with psycopg.connect(test_db) as c:
+        assert c.execute("select score, sentiment, ai_summary from leads where id = %s", [lead_id]).fetchone() == (
+            80, "positive", GOOD["brief"])
+        assert c.execute("select questions, qualification from analyses").fetchone() == (
+            ["Is it 5G?"], GOOD["qualification"])
 
 
 @pytest.mark.asyncio

@@ -16,6 +16,7 @@ HOT_SCORE = 70
 MAX_BRIEF = 600
 SENTIMENTS = {"positive", "neutral", "negative"}
 UNREACHED = {"no_answer", "voicemail", "unreachable", "no_response"}
+QUALIFICATION_KEYS = ("need", "budget", "timeline", "authority")
 TAG = re.compile(r"\[[a-z ]+\]\s*")
 
 
@@ -29,6 +30,9 @@ Reply with JSON only, no other text, with exactly these keys:
 - "sentiment": "positive", "neutral" or "negative", how the customer felt by the end
 - "next_step": one sentence, what the salesperson should do next, with the time if one was agreed
 - "brief": two or three sentences the salesperson reads before calling: who, their situation, what they liked, what worries them
+- "questions": list of short phrases, what the customer asked (empty list if none)
+- "unanswered": list of short phrases, the questions the agent could not answer (empty list if none)
+- "qualification": object with integer keys "need", "budget", "timeline" and "authority", each 0-25: how clear their need is, whether they can afford it, how soon they would buy, and whether they decide
 Use only what the transcript says. Never invent prices, names or times.
 
 Transcript:
@@ -46,8 +50,12 @@ def parse_analysis(text: str) -> dict | None:
         return None
     score, objections = data.get("score"), data.get("objections")
     strings = [data.get(k) for k in ("reason", "next_step", "brief")]
+    questions, unanswered, qualification = data.get("questions"), data.get("unanswered"), data.get("qualification")
     if (
-        not isinstance(score, int) or isinstance(score, bool) or not 0 <= score <= 100
+        not all(isinstance(l, list) and all(isinstance(q, str) for q in l) for l in (questions, unanswered))
+        or not isinstance(qualification, dict) or set(qualification) != set(QUALIFICATION_KEYS)
+        or not all(isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 25 for v in qualification.values())
+        or not isinstance(score, int) or isinstance(score, bool) or not 0 <= score <= 100
         or data.get("sentiment") not in SENTIMENTS
         or not isinstance(objections, list) or not all(isinstance(o, str) for o in objections)
         or not all(isinstance(s, str) and s.strip() for s in strings)
@@ -60,6 +68,9 @@ def parse_analysis(text: str) -> dict | None:
         "sentiment": data["sentiment"],
         "next_step": data["next_step"],
         "brief": data["brief"][:MAX_BRIEF],
+        "questions": questions,
+        "unanswered": unanswered,
+        "qualification": qualification,
     }
 
 

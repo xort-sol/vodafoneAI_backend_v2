@@ -89,6 +89,15 @@ def test_saving_a_call_moves_its_lead_on(call_rows, test_db):
     assert (status, attempts) == ("retry", 1) and next_at is not None
 
 
+def test_saving_a_call_records_last_call_and_follow_up(call_rows, test_db):
+    lead_id = add_lead(test_db)
+    db.save_call({"job_id": "j1", "lead_id": lead_id, "outcome": "callback", "callback_at": "2037-11-05T10:00:00+00:00"})
+    with psycopg.connect(test_db) as c:
+        last_call, follow_up = c.execute("select last_call_at, next_follow_up from leads where id = %s", [lead_id]).fetchone()
+    assert last_call is not None
+    assert follow_up == datetime(2037, 11, 5, 10, tzinfo=timezone.utc)
+
+
 def test_a_callback_redials_at_the_customers_time(call_rows, test_db):
     lead_id = add_lead(test_db)
     db.save_call({"job_id": "j1", "lead_id": lead_id, "outcome": "callback", "callback_time": "Tue 3pm",

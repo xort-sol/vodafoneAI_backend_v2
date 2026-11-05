@@ -115,7 +115,8 @@ async def test_finished_call_has_outcome_and_transcript(call_rows, test_db):
 async def test_finished_call_is_timed_analysed_and_sent_to_the_inbox(call_rows, test_db, monkeypatch):
     async def fake_llm(prompt):
         return json.dumps({"score": 82, "reason": "r", "objections": [], "sentiment": "positive",
-                           "next_step": "n", "brief": "b"})
+                           "next_step": "n", "brief": "b", "questions": [], "unanswered": [],
+                               "qualification": {"need": 0, "budget": 0, "timeline": 0, "authority": 0}})
 
     monkeypatch.setattr(analyse, "ask_llm", fake_llm)
     agent = SalesAgent({**TEST_LEAD, "job_id": "j1"})
