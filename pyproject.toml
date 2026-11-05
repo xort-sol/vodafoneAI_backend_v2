@@ -3,10 +3,13 @@ name = "sales-agent"
 version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
+    "fastapi>=0.162.0",
+    "httpx>=0.28.1",
     "livekit-agents[elevenlabs,silero]~=1.8",
     "livekit-api>=1.2.2",
     "psycopg[binary]>=3.2",
     "python-dotenv>=1.2.4",
+    "uvicorn>=0.54.0",
 ]
 
 [dependency-groups]
@@ -25,4 +28,4 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/agent", "src/shared", "src/dialler", "src/analysis"]
+packages = ["src/agent", "src/shared", "src/dialler", "src/analysis", "src/api"]

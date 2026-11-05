@@ -192,3 +192,10 @@ def save_call_stats(job_id: str, duration_s: int, avg_latency_ms: int | None) ->
         conn.execute(
             "update calls set duration_s = %s, avg_latency_ms = %s where job_id = %s", [duration_s, avg_latency_ms, job_id]
         )
+
+
+def role_of(user_id: str) -> str | None:
+    """The web app role an admin gave this user, or None (no profile, or no role yet)."""
+    with _connect() as conn:
+        row = conn.execute("select role from profiles where id = %s", [user_id]).fetchone()
+    return row[0] if row else None
