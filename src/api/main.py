@@ -27,18 +27,26 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Authorization", "Content-Type"],
 )
-CALL_ROOM = re.compile(r"^call-(\d+)-\d+$")  # the dialler's naming, see dialler.main
+CALL_ROOM = re.compile(r"^call-")
+PHONE = re.compile(r"^call-(\d+)-\d+$")  # the dialler's naming, see dialler.main
 MAY_LISTEN = {"admin", "sales_manager", "salesperson"}
 
 
 async def user_id_for(token: str) -> str | None:
-    """The Supabase user this access token belongs to, or None if Supabase rejects it."""
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.get(
-            f"{os.environ['SUPABASE_URL']}/auth/v1/user",
-            headers={"Authorization": f"Bearer {token}", "apikey": os.environ["SUPABASE_PUBLISHABLE_KEY"]},
-        )
-    return r.json().get("id") if r.status_code == 200 else None
+    """The Supabase user this access token belongs to; None if Supabase rejects the token, 502 if it cannot answer."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                f"{os.environ['SUPABASE_URL']}/auth/v1/user",
+                headers={"Authorization": f"Bearer {token}", "apikey": os.environ["SUPABASE_PUBLISHABLE_KEY"]},
+            )
+    except httpx.HTTPError as e:
+        raise HTTPException(502, "Could not reach Supabase") from e
+    if r.status_code in (401, 403):
+        return None
+    if r.status_code != 200:  # a Supabase outage must not look like a bad token: the web app would sign the user out
+        raise HTTPException(502, "Could not check your sign-in")
+    return r.json().get("id")
 
 
 async def listener(authorization: str | None = Header(None)) -> str:
@@ -72,7 +80,7 @@ def health():
 @app.get("/live-calls", dependencies=[Depends(listener)])
 async def live_calls():
     return [
-        {"room": r.name, "phone": "+" + CALL_ROOM.match(r.name).group(1), "started_at": r.creation_time}
+        {"room": r.name, "phone": "+" + m.group(1) if (m := PHONE.match(r.name)) else None, "started_at": r.creation_time}
         for r in await live_rooms()
     ]
 

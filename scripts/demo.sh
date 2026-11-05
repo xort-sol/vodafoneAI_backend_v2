@@ -3,7 +3,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 set -a; [ -f .env ] && . ./.env; set +a
-if [ -z "${DIAL_ALLOWLIST:-}" ] || [ "$DIAL_ALLOWLIST" = "*" ]; then
+allow=${DIAL_ALLOWLIST:-}; allow=${allow//[[:space:]]/}  # the dialler strips too: " *" means any number
+if [ -z "$allow" ] || [ "$allow" = "*" ]; then
   echo "Set DIAL_ALLOWLIST to the numbers the demo may ring, e.g. DIAL_ALLOWLIST=+353871234567 (not empty, not *)." >&2
   exit 1
 fi

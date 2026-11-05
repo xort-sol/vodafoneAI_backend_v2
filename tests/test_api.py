@@ -1,5 +1,9 @@
+import asyncio
+
+import httpx
 import jwt
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from livekit import api as lk
 
@@ -112,3 +116,72 @@ def test_role_of_reads_the_profile(test_db):
         assert db.role_of(uid) == "salesperson"
         conn.execute("delete from auth.users where id = %s", [uid])
     assert db.role_of(uid) is None
+
+
+def test_live_token_needs_a_token(client):
+    assert client.post("/live-token", json={"room": "call-1-1"}).status_code == 401
+
+
+def test_analyst_cannot_get_a_live_token(client, signed_in, rooms):
+    signed_in("analyst")
+    rooms([("call-353871234567-1793710403", 2)])
+    assert client.post("/live-token", json={"room": "call-353871234567-1793710403"}, headers=AUTH).status_code == 403
+
+
+def test_token_for_a_non_call_room_is_404(client, signed_in, rooms):
+    signed_in("sales_manager")
+    rooms([("web_test_x", 2)])
+    assert client.post("/live-token", json={"room": "web_test_x"}, headers=AUTH).status_code == 404
+
+
+def test_call_room_without_digits_lists_a_null_phone_and_can_be_listened_to(client, signed_in, rooms):
+    signed_in("salesperson")
+    rooms([("call-abc-1", 2)])
+    assert client.get("/live-calls", headers=AUTH).json() == [{"room": "call-abc-1", "phone": None, "started_at": 1793710403}]
+    assert client.post("/live-token", json={"room": "call-abc-1"}, headers=AUTH).status_code == 200
+
+
+def supabase(monkeypatch, handler):
+    """Route user_id_for's HTTP calls to handler instead of the network."""
+    monkeypatch.setenv("SUPABASE_URL", "https://x.supabase.co")
+    monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "pub-key")
+    real = httpx.AsyncClient
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+
+
+def test_supabase_check_sends_the_token_and_the_publishable_key(monkeypatch):
+    seen = {}
+
+    def handler(request):
+        seen.update(request.headers)
+        seen["url"] = str(request.url)
+        return httpx.Response(200, json={"id": "u1"})
+
+    supabase(monkeypatch, handler)
+    assert asyncio.run(main.user_id_for("tok")) == "u1"
+    assert seen["apikey"] == "pub-key" and seen["authorization"] == "Bearer tok"
+    assert seen["url"] == "https://x.supabase.co/auth/v1/user"
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_supabase_rejecting_the_token_is_401(monkeypatch, status):
+    supabase(monkeypatch, lambda r: httpx.Response(status))
+    assert asyncio.run(main.user_id_for("tok")) is None
+
+
+@pytest.mark.parametrize("status", [429, 500, 503])
+def test_supabase_failing_is_502_not_401(monkeypatch, status):
+    supabase(monkeypatch, lambda r: httpx.Response(status))
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(main.user_id_for("tok"))
+    assert e.value.status_code == 502
+
+
+def test_supabase_unreachable_is_502(monkeypatch):
+    def handler(request):
+        raise httpx.ConnectTimeout("slow")
+
+    supabase(monkeypatch, handler)
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(main.user_id_for("tok"))
+    assert e.value.status_code == 502
