@@ -80,15 +80,15 @@ def save_call(row: dict) -> None:
             )
 
 
-def save_transcript(job_id: str, lines: list[tuple[str, str]]) -> None:
+def save_transcript(job_id: str, lines: list[tuple[str, str, int]]) -> None:
     with _connect() as conn:
         call = conn.execute("select id from calls where job_id = %s", [job_id]).fetchone()
         if call is None:
             return
         with conn.cursor() as cur:
             cur.executemany(
-                "insert into transcripts (call_id, position, role, text) values (%s, %s, %s, %s) on conflict do nothing",
-                [(call[0], i, role, text) for i, (role, text) in enumerate(lines)],
+                "insert into transcripts (call_id, position, role, text, t_seconds) values (%s, %s, %s, %s, %s) on conflict do nothing",
+                [(call[0], i, role, text, t) for i, (role, text, t) in enumerate(lines)],
             )
 
 

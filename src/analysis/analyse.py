@@ -20,8 +20,8 @@ QUALIFICATION_KEYS = ("need", "budget", "timeline", "authority")
 TAG = re.compile(r"\[[a-z ]+\]\s*")
 
 
-def build_prompt(lines: list[tuple[str, str]], outcome: str) -> str:
-    transcript = "\n".join(f"{'Agent' if who == 'agent' else 'Customer'}: {TAG.sub('', text)}" for who, text in lines)
+def build_prompt(lines: list[tuple[str, str, int]], outcome: str) -> str:
+    transcript = "\n".join(f"{'Agent' if who == 'agent' else 'Customer'}: {TAG.sub('', text)}" for who, text, _ in lines)
     return f"""You review a sales call an AI agent made to a small business. The recorded outcome is "{outcome}".
 Reply with JSON only, no other text, with exactly these keys:
 - "score": integer 0-100, how likely this customer is to buy if a salesperson follows up
@@ -105,9 +105,9 @@ async def ask_llm(prompt: str) -> str:
         return (await model.chat(chat_ctx=ctx).collect()).text
 
 
-async def analyse_call(job_id: str, lines: list[tuple[str, str]], outcome: str, ask=None) -> None:
+async def analyse_call(job_id: str, lines: list[tuple[str, str, int]], outcome: str, ask=None) -> None:
     """Analyse one saved call; a hot lead goes to the inbox even if the analysis fails, so it is never lost."""
-    if outcome in UNREACHED or not any(who == "customer" for who, _ in lines):
+    if outcome in UNREACHED or not any(who == "customer" for who, _, _ in lines):
         return  # nobody to analyse: unanswered, voicemail, or silence
     if outcome == "interested":
         # before the model call: LiveKit may end the job process while it runs

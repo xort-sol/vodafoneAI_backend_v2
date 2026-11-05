@@ -30,14 +30,14 @@ def test_do_not_call_goes_on_the_suppression_list(call_rows, test_db):
 
 def test_transcript_is_stored_in_order(call_rows, test_db):
     db.save_call({"job_id": "j1", "outcome": "hung_up"})
-    db.save_transcript("j1", [("agent", "[warmly] Hi, I'm an AI assistant."), ("customer", "Hello?")])
+    db.save_transcript("j1", [("agent", "[warmly] Hi, I'm an AI assistant.", 3), ("customer", "Hello?", 7)])
     with psycopg.connect(test_db) as conn:
-        lines = conn.execute("select role, text from transcripts order by position").fetchall()
-    assert lines == [("agent", "[warmly] Hi, I'm an AI assistant."), ("customer", "Hello?")]
+        lines = conn.execute("select role, text, t_seconds from transcripts order by position").fetchall()
+    assert lines == [("agent", "[warmly] Hi, I'm an AI assistant.", 3), ("customer", "Hello?", 7)]
 
 
 def test_transcript_without_a_call_is_skipped(call_rows):
-    db.save_transcript("no-such-job", [("agent", "Hi")])  # must not raise
+    db.save_transcript("no-such-job", [("agent", "Hi", 0)])  # must not raise
 
 
 def test_lead_is_logged_when_the_database_is_down(call_rows, monkeypatch, caplog):

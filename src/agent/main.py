@@ -63,20 +63,25 @@ async def first_question_only(chunks: AsyncIterable) -> AsyncIterable:
             yield chunk
 
 
-def transcript_lines(items) -> list[tuple[str, str]]:
-    """What was said, in order: (agent or customer, text). Delivery tags stay; the web app hides them."""
+def transcript_lines(items, started_at: float) -> list[tuple[str, str, int]]:
+    """What was said, in order: (agent or customer, text, seconds from started_at). Delivery tags stay; the web app hides them."""
     speakers = {"assistant": "agent", "user": "customer"}
-    return [(speakers[i.role], i.text_content) for i in items if i.type == "message" and i.role in speakers and i.text_content]
+    return [
+        (speakers[i.role], i.text_content, round(i.created_at - started_at))
+        for i in items
+        if i.type == "message" and i.role in speakers and i.text_content
+    ]
 
 
 def now_line(now: datetime) -> str:
-    return f"Right now it's {now:%A} {now.day} {now:%B %Y}, {now:%-I:%M %p} in Ireland."
+    return f"Right now it's {now:%A} {now.day} {now:%B %Y}, {now:%-I:%M %p} in Ireland. UTC offset: {now.isoformat()[-6:]}"
 
 
 class SalesAgent(Agent):
     def __init__(self, lead: dict) -> None:
         self.lead = lead
         self.recorded = False
+        self.started_at = time.time()  # wall clock, to date each transcript line
         self.outcome = ""
         self.started = time.monotonic()  # whole session, ringing included: what the voice pipeline bills
         self.reached = False  # True once a person or voicemail is on the line
@@ -110,7 +115,7 @@ How you sound (your voice reads these marks; the customer never sees them):
   Example: "[empathetic] Oh, that's REALLY frustrating. [curious] What happens when it drops?"
 
 How the call goes:
-- Open: greet them (by name if you know it), say you're an AI assistant from {BUSINESS_NAME}, and ask if they have a quick minute.
+- Open: greet them (by name if you know it), say you're an AI assistant calling on behalf of {BUSINESS_NAME}, and ask if they have a quick minute.
   Only a clear yes ("sure", "yes", "go ahead") counts as permission. A bare "hi" or "hello" is not: briefly ask again if now's okay.
   If it's a bad time, ask when is better, record_outcome "callback", and wrap up.
 - Discover: ask an open question about how things are going in the area our services cover, then one follow-up that builds on their answer.
@@ -127,7 +132,7 @@ How the call goes:
   Once they give a time, record_outcome "interested" with that callback_time.
   Write callback_time as the time they said plus the exact day and date, worked out from today's date,
   like "tomorrow at 10am (Saturday 31 October), by phone". Never guess a time they didn't give.
-  Also pass callback_at: the same moment in ISO 8601 with the Irish UTC offset, like "2026-10-31T10:00:00+00:00".
+  Also pass callback_at: the same moment in ISO 8601 using the UTC offset given above.
   In your goodbye, repeat the time they gave you so they know what happens next.
   If they're not, thank them warmly and record_outcome "not_interested". If they ask not to be called again, apologise and record_outcome "do_not_call".
 - Only record an outcome once the customer has clearly answered. Never call record_outcome or end_call in a turn where you ask a question;
@@ -195,7 +200,7 @@ Before every reply, check:
         await asyncio.to_thread(record_result, {**self.lead, "outcome": outcome, **fields})
         logger.info("recorded outcome %s for %s", outcome, self.lead.get("phone"))
 
-    async def finish(self, lines: list[tuple[str, str]], latency_ms: int | None = None) -> None:
+    async def finish(self, lines: list[tuple[str, str, int]], latency_ms: int | None = None) -> None:
         """At hang-up: save a hung_up outcome if none was recorded, then the transcript, timings and analysis."""
         await self.record_hang_up()
         if not self.recorded:
@@ -285,7 +290,7 @@ async def sales_call(ctx: agents.JobContext):
     agent.reached = not phone_mode  # a console or web tester is on the line from the start
 
     async def on_shutdown():
-        await agent.finish(transcript_lines(session.history.items), analyse.avg_latency_ms(session.history.items))
+        await agent.finish(transcript_lines(session.history.items, agent.started_at), analyse.avg_latency_ms(session.history.items))
 
     ctx.add_shutdown_callback(on_shutdown)
 
@@ -343,7 +348,7 @@ async def sales_call(ctx: agents.JobContext):
     # machine-ivr is navigated automatically by AMD; human/uncertain continue as a normal conversation
     if result.category == "machine-vm":
         handle = session.generate_reply(
-            instructions=f"You reached voicemail. Leave a brief message: you're an AI assistant from {BUSINESS_NAME}, "
+            instructions=f"You reached voicemail. Leave a brief message: you're an AI assistant calling on behalf of {BUSINESS_NAME}, "
             "calling about services that may help them, and a team member will try again. Then stop."
         )
         await handle.wait_for_playout()

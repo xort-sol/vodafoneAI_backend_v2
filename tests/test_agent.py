@@ -44,7 +44,7 @@ def test_test_call_prompt_has_nothing_the_agent_could_read_out_as_customer_info(
 
 def test_prompt_has_the_date_and_time_in_ireland():
     now = datetime(2026, 10, 30, 14, 5, tzinfo=agent_module.IRELAND)
-    assert agent_module.now_line(now) == "Right now it's Friday 30 October 2026, 2:05 PM in Ireland."
+    assert agent_module.now_line(now) == "Right now it's Friday 30 October 2026, 2:05 PM in Ireland. UTC offset: +00:00"
     assert datetime.now(agent_module.IRELAND).strftime("%A %-d %B %Y") in SalesAgent(JOB_LEAD).instructions
 
 
@@ -94,17 +94,33 @@ def test_transcript_keeps_only_spoken_turns():
     history.add_message(role="assistant", content="[warmly] Hi, I'm an AI assistant.")
     history.add_message(role="user", content="Hello?")
     history.items.append(FunctionCall(call_id="1", name="record_outcome", arguments="{}"))
-    assert agent_module.transcript_lines(history.items) == [
-        ("agent", "[warmly] Hi, I'm an AI assistant."),
-        ("customer", "Hello?"),
-    ]
+    started = history.items[1].created_at - 12.4
+    lines = agent_module.transcript_lines(history.items, started)
+    assert [(r, text) for r, text, _ in lines] == [("agent", "[warmly] Hi, I'm an AI assistant."), ("customer", "Hello?")]
+
+
+def test_transcript_lines_carry_seconds_from_the_start():
+    history = ChatContext()
+    history.add_message(role="assistant", content="Hi")
+    started = history.items[0].created_at - 12.4
+    assert agent_module.transcript_lines(history.items, started) == [("agent", "Hi", 12)]
+
+
+def test_agent_introduces_itself_on_behalf_of_the_business(monkeypatch):
+    monkeypatch.setattr(agent_module, "BUSINESS_NAME", "Vodafone")
+    assert "AI assistant calling on behalf of Vodafone" in SalesAgent(TEST_LEAD).instructions
+
+
+def test_prompt_gives_the_summer_utc_offset():
+    now = datetime(2027, 7, 1, 10, 0, tzinfo=agent_module.IRELAND)
+    assert "+01:00" in agent_module.now_line(now)
 
 
 @pytest.mark.asyncio
 async def test_finished_call_has_outcome_and_transcript(call_rows, test_db):
     agent = SalesAgent({**TEST_LEAD, "job_id": "j1"})
     agent.reached = True
-    await agent.finish([("agent", "Hi, I'm an AI assistant."), ("customer", "Hello?")])
+    await agent.finish([("agent", "Hi, I'm an AI assistant.", 0), ("customer", "Hello?", 4)])
     assert [r["outcome"] for r in call_rows()] == ["hung_up"]
     with psycopg.connect(test_db) as conn:
         assert conn.execute("select count(*) from transcripts").fetchone()[0] == 2
@@ -122,7 +138,7 @@ async def test_finished_call_is_timed_analysed_and_sent_to_the_inbox(call_rows, 
     agent = SalesAgent({**TEST_LEAD, "job_id": "j1"})
     agent.reached = True
     await agent.save("interested", callback_time="Thu 10am")
-    await agent.finish([("agent", "Hi"), ("customer", "Yes, ring me Thursday")], latency_ms=900)
+    await agent.finish([("agent", "Hi", 0), ("customer", "Yes, ring me Thursday", 3)], latency_ms=900)
     row = call_rows()[0]
     assert row["avg_latency_ms"] == 900 and row["duration_s"] is not None
     with psycopg.connect(test_db) as conn:
@@ -131,7 +147,7 @@ async def test_finished_call_is_timed_analysed_and_sent_to_the_inbox(call_rows, 
 
 @pytest.mark.asyncio
 async def test_unsaved_call_gets_no_transcript(call_rows, test_db):
-    await SalesAgent({**TEST_LEAD, "job_id": "j1"}).finish([("agent", "Hi")])  # never reached: setup error
+    await SalesAgent({**TEST_LEAD, "job_id": "j1"}).finish([("agent", "Hi", 0)])  # never reached: setup error
     assert call_rows() == []
 
 

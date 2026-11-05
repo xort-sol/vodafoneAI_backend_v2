@@ -25,12 +25,12 @@ GOOD = {
 }
 
 LINES = [
-    ("agent", "[warmly] Hi Aoife, I'm an AI assistant from Acme. Have you a quick minute?"),
-    ("customer", "Yes, go on."),
-    ("agent", "How's the office internet these days?"),
-    ("customer", "Slow, honestly. Eight of us on it."),
-    ("agent", "Business Broadband 500 starts at forty euro. Want to hear more?"),
-    ("customer", "Bit pricey, but have someone ring me Thursday at 10."),
+    ("agent", "[warmly] Hi Aoife, I'm an AI assistant from Acme. Have you a quick minute?", 0),
+    ("customer", "Yes, go on.", 0),
+    ("agent", "How's the office internet these days?", 0),
+    ("customer", "Slow, honestly. Eight of us on it.", 0),
+    ("agent", "Business Broadband 500 starts at forty euro. Want to hear more?", 0),
+    ("customer", "Bit pricey, but have someone ring me Thursday at 10.", 0),
 ]
 
 
@@ -192,7 +192,7 @@ class MustNotBeCalled:
 async def test_unanswered_calls_are_not_analysed(call_rows, test_db, outcome):
     db.save_call({"job_id": "j1", "outcome": outcome})
     llm = MustNotBeCalled()
-    await analyse_call("j1", [("agent", "Hi, you've reached Aoife, leave a message.")], outcome, ask=llm)
+    await analyse_call("j1", [("agent", "Hi, you've reached Aoife, leave a message.", 0)], outcome, ask=llm)
     assert not llm.called and saved(test_db) == ([], [])
 
 
