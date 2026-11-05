@@ -28,6 +28,10 @@ def in_calling_hours(local: time, start: time | None, end: time | None) -> bool:
     return start <= local < end
 
 
+def in_calling_days(local: datetime, days: list[str]) -> bool:
+    return local.strftime("%a") in days
+
+
 def free_slots(daily_cap: int | None, called_today: int, dialling: int, concurrency: int) -> int:
     """How many more calls to start now: under the concurrency limit, and calls in progress count toward the cap."""
     slots = concurrency - dialling
@@ -51,13 +55,13 @@ async def tick(dispatch, now: datetime, concurrency: int, allowlist: set[str] | 
     midnight = local.replace(hour=0, minute=0, second=0, microsecond=0)
     for c in db.running_campaigns():
         db.finish_campaign_if_empty(c["id"])
-        if not in_calling_hours(local.time(), c["calling_hours_start"], c["calling_hours_end"]):
+        if not in_calling_days(local, c["days"]) or not in_calling_hours(local.time(), c["calling_hours_start"], c["calling_hours_end"]):
             continue
         called_today, dialling = db.campaign_counts(c["id"], since=midnight, now=now)
-        n = free_slots(c["daily_cap"], called_today, dialling, concurrency)
+        n = free_slots(c["daily_cap"], called_today, dialling, min(concurrency, c["concurrency"]))
         claimed = []
         for _ in range(n):  # one at a time: a claimed lead marks its number busy, so one number never rings twice at once
-            claimed += db.claim_leads(c["id"], 1, allowlist, now)
+            claimed += db.claim_leads(c["id"], 1, allowlist, now, c["max_attempts"])
         for lead in claimed:
             room = f"call-{lead['phone'].lstrip('+')}-{int(clock.time())}"
             try:

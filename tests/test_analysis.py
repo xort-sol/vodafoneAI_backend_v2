@@ -110,7 +110,7 @@ def saved(test_db):
 @pytest.mark.asyncio
 async def test_hot_call_gets_an_analysis_and_one_inbox_task(call_rows, test_db):
     db.save_call({"job_id": "j1", "outcome": "interested", "callback_time": "Thu 10am",
-                  "callback_at": "2026-11-05T10:00:00+00:00"})
+                  "callback_at": "2037-11-05T10:00:00+00:00"})
     await analyse_call("j1", LINES, "interested", ask=FakeLLM(json.dumps(GOOD)))
     await analyse_call("j1", LINES, "interested", ask=FakeLLM(json.dumps(GOOD)))  # retried: no duplicate
     analyses, tasks = saved(test_db)

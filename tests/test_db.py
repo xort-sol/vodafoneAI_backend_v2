@@ -92,9 +92,9 @@ def test_saving_a_call_moves_its_lead_on(call_rows, test_db):
 def test_a_callback_redials_at_the_customers_time(call_rows, test_db):
     lead_id = add_lead(test_db)
     db.save_call({"job_id": "j1", "lead_id": lead_id, "outcome": "callback", "callback_time": "Tue 3pm",
-                  "callback_at": "2026-11-03T15:00:00+00:00"})
-    assert lead(test_db, lead_id) == ("callback", 1, datetime(2026, 11, 3, 15, tzinfo=timezone.utc))
-    assert call_rows()[0]["callback_at"] == datetime(2026, 11, 3, 15, tzinfo=timezone.utc)
+                  "callback_at": "2037-11-03T15:00:00+00:00"})
+    assert lead(test_db, lead_id) == ("callback", 1, datetime(2037, 11, 3, 15, tzinfo=timezone.utc))
+    assert call_rows()[0]["callback_at"] == datetime(2037, 11, 3, 15, tzinfo=timezone.utc)
 
 
 def test_an_unreadable_callback_time_still_saves_the_call(call_rows, test_db):
@@ -109,3 +109,24 @@ def test_saving_a_call_leaves_attempts_to_the_dialler(call_rows, test_db):
     db.save_call({"job_id": "j1", "lead_id": lead_id, "outcome": "no_answer"})
     db.save_call({"job_id": "j1", "lead_id": lead_id, "outcome": "no_answer"})
     assert lead(test_db, lead_id)[1] == 1
+
+
+def test_callback_time_without_offset_is_read_as_irish_time(call_rows, test_db):
+    lead_id = add_lead(test_db)
+    db.save_call({"job_id": "j1", "lead_id": lead_id, "outcome": "callback", "callback_at": "2037-07-01T10:00:00"})
+    assert call_rows()[0]["callback_at"] == datetime(2037, 7, 1, 9, tzinfo=timezone.utc)  # Irish summer time is UTC+1
+
+
+def test_callback_time_in_the_past_counts_as_no_usable_time(call_rows, test_db):
+    lead_id = add_lead(test_db)
+    db.save_call({"job_id": "j1", "lead_id": lead_id, "outcome": "callback", "callback_at": "2020-01-01T10:00:00+00:00"})
+    assert lead(test_db, lead_id) == ("interested", 1, None)
+
+
+def test_the_campaigns_retry_settings_decide_the_next_call(call_rows, test_db):
+    lead_id = add_lead(test_db)
+    with psycopg.connect(test_db, autocommit=True) as c:
+        c.execute("insert into campaigns (name, max_attempts, retry_hours) values ('c', 1, 1)")
+        c.execute("update leads set campaign_id = 1")
+    db.save_call({"job_id": "j1", "lead_id": lead_id, "outcome": "no_answer"})
+    assert lead(test_db, lead_id) == ("exhausted", 1, None)

@@ -4,7 +4,7 @@ from datetime import datetime, time, timedelta, timezone
 import psycopg
 import pytest
 
-from dialler.main import free_slots, in_calling_hours, parse_allowlist, tick
+from dialler.main import IRELAND, free_slots, in_calling_days, in_calling_hours, parse_allowlist, tick
 from shared import db
 
 NOW = datetime(2026, 11, 2, 11, 0, tzinfo=timezone.utc)  # 11:00 in Dublin (GMT in winter)
@@ -74,7 +74,7 @@ def test_claim_picks_only_due_allowed_unsuppressed_leads(test_db, campaign):
     claimed = db.claim_leads(1, 10, allowlist={"+1", "+2", "+3", "+4", "+5"}, now=NOW)  # +6 not allowed
     assert sorted(l["phone"] for l in claimed) == ["+1", "+3"]
     assert all(l["attempts"] == 1 for l in claimed)  # the attempt is counted at claim time
-    assert statuses(test_db) == {"+1": "dialling", "+2": "retry", "+3": "dialling", "+4": "closed", "+5": "new", "+6": "new"}
+    assert statuses(test_db) == {"+1": "dialling", "+2": "retry", "+3": "dialling", "+4": "closed", "+5": "do_not_call", "+6": "new"}
 
 
 def test_claim_respects_n(test_db, campaign):
@@ -150,6 +150,78 @@ def test_claim_never_rings_a_number_already_in_a_call(test_db, campaign):
 async def test_tick_rings_each_number_once_at_a_time(test_db, campaign):
     for _ in range(3):
         campaign("+1")
+    dispatch = FakeDispatch()
+    await tick(dispatch, NOW, concurrency=2, allowlist=None)
+    assert len(dispatch.requests) == 1
+
+
+def one(test_db, sql):
+    with psycopg.connect(test_db) as c:
+        return c.execute(sql).fetchone()
+
+
+def test_lead_without_consent_is_never_claimed(test_db, campaign):
+    campaign("+1", consent=False)
+    assert db.claim_leads(1, 10, allowlist=None, now=NOW) == []
+
+
+def test_archived_lead_is_never_claimed(test_db, campaign):
+    campaign("+1", archived=True)
+    assert db.claim_leads(1, 10, allowlist=None, now=NOW) == []
+
+
+def test_lead_with_sales_status_is_not_claimed_and_does_not_hold_the_campaign_open(test_db, campaign):
+    campaign("+1", sales_status="Not interested", status="retry")
+    assert db.claim_leads(1, 10, allowlist=None, now=NOW) == []
+    db.finish_campaign_if_empty(1)
+    assert one(test_db, "select status from campaigns") == ("done",)
+
+
+def test_suppressed_lead_moves_to_do_not_call_and_campaign_finishes(test_db, campaign):
+    campaign("+1", status="new")
+    with psycopg.connect(test_db, autocommit=True) as c:
+        c.execute("insert into suppression (phone, source) values ('+1', 'manual')")
+    assert db.claim_leads(1, 10, allowlist=None, now=NOW) == []
+    assert statuses(test_db) == {"+1": "do_not_call"}
+    db.finish_campaign_if_empty(1)
+    assert one(test_db, "select status from campaigns") == ("done",)
+
+
+def test_given_up_lead_has_no_next_call_time(test_db, campaign):
+    campaign("+1", status="dialling", dialled_at=NOW - timedelta(hours=1), attempts=db.MAX_ATTEMPTS,
+             next_attempt_at=NOW - timedelta(hours=2))
+    db.claim_leads(1, 10, allowlist=None, now=NOW)
+    assert one(test_db, "select status, next_attempt_at from leads") == ("exhausted", None)
+
+
+def test_campaign_retry_settings_are_used():
+    now = datetime(2026, 11, 4, 12, tzinfo=timezone.utc)
+    assert db.next_lead_state("no_answer", 1, None, now, max_attempts=2, retry_after=timedelta(hours=1)) == ("retry", now + timedelta(hours=1))
+    assert db.next_lead_state("no_answer", 2, None, now, max_attempts=2, retry_after=timedelta(hours=1)) == ("exhausted", None)
+
+
+def test_no_calls_on_a_day_the_campaign_is_off():
+    weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+    assert not in_calling_days(datetime(2026, 11, 8, 12, tzinfo=IRELAND), weekdays)  # a Sunday
+    assert in_calling_days(datetime(2026, 11, 9, 12, tzinfo=IRELAND), weekdays)  # a Monday
+
+
+@pytest.mark.asyncio
+async def test_tick_skips_a_campaign_on_a_day_it_is_off(test_db, campaign):
+    campaign("+1")
+    with psycopg.connect(test_db, autocommit=True) as c:
+        c.execute("update campaigns set days = '{Sat}'")  # NOW is a Monday
+    dispatch = FakeDispatch()
+    await tick(dispatch, NOW, concurrency=2, allowlist=None)
+    assert dispatch.requests == []
+
+
+@pytest.mark.asyncio
+async def test_campaign_concurrency_limits_the_tick(test_db, campaign):
+    campaign("+1")
+    campaign("+2")
+    with psycopg.connect(test_db, autocommit=True) as c:
+        c.execute("update campaigns set concurrency = 1")
     dispatch = FakeDispatch()
     await tick(dispatch, NOW, concurrency=2, allowlist=None)
     assert len(dispatch.requests) == 1

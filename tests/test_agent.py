@@ -359,9 +359,9 @@ async def test_frustrated_customer_gets_an_empathetic_delivery_tag(call_rows):
 @pytest.mark.asyncio
 async def test_callback_at_is_saved_for_the_dialler(call_rows):
     await SalesAgent(JOB_LEAD).record_outcome(
-        None, outcome="callback", callback_time="tomorrow 3pm", callback_at="2026-11-03T15:00:00+00:00"
+        None, outcome="callback", callback_time="tomorrow 3pm", callback_at="2037-11-03T15:00:00+00:00"
     )
-    assert call_rows()[0]["callback_at"] == datetime(2026, 11, 3, 15, tzinfo=timezone.utc)
+    assert call_rows()[0]["callback_at"] == datetime(2037, 11, 3, 15, tzinfo=timezone.utc)
 
 
 @pytest.mark.skipif(not os.getenv("LIVEKIT_API_KEY"), reason="needs LiveKit Cloud credentials for inference")
