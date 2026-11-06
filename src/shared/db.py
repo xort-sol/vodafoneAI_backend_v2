@@ -37,7 +37,7 @@ def next_lead_state(outcome: str, attempts: int, callback_at: datetime | None, n
     return "interested", None  # interested, or a callback with no usable time: a salesperson follows up
 
 
-def _parse_time(value: str | None, now: datetime) -> datetime | None:
+def parse_time(value: str | None, now: datetime) -> datetime | None:
     """A callback time the dialler can use: a time without an offset is Irish time, and one already past is no time at all."""
     try:
         t = datetime.fromisoformat(value) if value else None
@@ -52,7 +52,7 @@ def save_call(row: dict) -> None:
     """One row per LiveKit job; saving the same job again is ignored. A do-not-call also goes on the suppression list.
     A dialler call also moves its lead to the next status, in the same transaction."""
     now = datetime.now(timezone.utc)
-    row = {**row, "callback_at": _parse_time(row.get("callback_at"), now)}
+    row = {**row, "callback_at": parse_time(row.get("callback_at"), now)}
     columns = ", ".join(CALL_FIELDS)
     with _connect() as conn:
         inserted = conn.execute(

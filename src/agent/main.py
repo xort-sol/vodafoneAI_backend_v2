@@ -63,6 +63,17 @@ async def first_question_only(chunks: AsyncIterable) -> AsyncIterable:
             yield chunk
 
 
+def opening_line(lead: dict) -> str:
+    first_name = (lead.get("name") or "").split()[:1]
+    greeting = f"Hi {first_name[0]}" if first_name else "Hi"
+    return f"[warmly] {greeting}, I'm an AI assistant calling on behalf of {BUSINESS_NAME}. Is now an okay time for a quick chat?"
+
+
+def has_disclosed(chat_ctx) -> bool:
+    """True once the customer heard the disclosure; a line cut off before it doesn't count."""
+    return any(i.type == "message" and i.role == "assistant" and "AI assistant" in (i.text_content or "") for i in chat_ctx.items)
+
+
 def transcript_lines(items, started_at: float) -> list[tuple[str, str, int]]:
     """What was said, in order: (agent or customer, text, seconds from started_at). Delivery tags stay; the web app hides them."""
     speakers = {"assistant": "agent", "user": "customer"}
@@ -85,6 +96,7 @@ class SalesAgent(Agent):
         self.outcome = ""
         self.started = time.monotonic()  # whole session, ringing included: what the voice pipeline bills
         self.reached = False  # True once a person or voicemail is on the line
+        self.on_voicemail = False  # voicemail has its own message, not the opening
         super().__init__(
             instructions=f"""You are Sam, a warm, relaxed sales rep for {BUSINESS_NAME}, talking to a customer on the phone.
 You are an AI assistant and must say so in your first sentence.
@@ -115,7 +127,7 @@ How you sound (your voice reads these marks; the customer never sees them):
   Example: "[empathetic] Oh, that's REALLY frustrating. [curious] What happens when it drops?"
 
 How the call goes:
-- Open: greet them (by name if you know it), say you're an AI assistant calling on behalf of {BUSINESS_NAME}, and ask if they have a quick minute.
+- Open: your first line is spoken for you: it greets them, says you're an AI assistant calling on behalf of {BUSINESS_NAME}, and asks if now's okay. Don't repeat it.
   Only a clear yes ("sure", "yes", "go ahead") counts as permission. A bare "hi" or "hello" is not: briefly ask again if now's okay.
   If it's a bad time, ask when is better, record_outcome "callback", and wrap up.
 - Discover: ask an open question about how things are going in the area our services cover, then one follow-up that builds on their answer.
@@ -129,14 +141,15 @@ How the call goes:
 - Close: after the pitch and at most one round of details, stop selling: no more features, plans or discovery questions.
   If they sound interested or give a soft reply like "okay", "sounds good" or "maybe", ask just "When would suit a team member
   to give you a call about it?", with no extra "would you like" question in front. If they say they're not interested, respect that.
-  Once they give a time, record_outcome "interested" with that callback_time.
+  A "yes" or "sure" to a follow-up is not a time: ask when, and never write "now" or invent one.
+  If they stay vague, ask for a day and a rough time. Once they give a time, record_outcome "interested" with that callback_time.
   Write callback_time as the time they said plus the exact day and date, worked out from today's date,
   like "tomorrow at 10am (Saturday 31 October), by phone". Never guess a time they didn't give.
   Also pass callback_at: the same moment in ISO 8601 using the UTC offset given above.
   In your goodbye, repeat the time they gave you so they know what happens next.
   If they're not, thank them warmly and record_outcome "not_interested". If they ask not to be called again, apologise and record_outcome "do_not_call".
 - Only record an outcome once the customer has clearly answered. Never call record_outcome or end_call in a turn where you ask a question;
-  wait for their reply first. After record_outcome, say a short friendly goodbye with no question and call end_call.
+  wait for their reply first. After record_outcome, say one short friendly goodbye with no question and call end_call in that same turn.
 
 Rules: only use facts and prices from the services below. If you don't know something, say a team member will follow up with the details.
 Call record_outcome exactly once, before ending the call.
@@ -154,12 +167,16 @@ Before every reply, check:
 2. Under twenty words.
 3. Did they hint at a problem? Then ask about it; don't pitch yet.
 4. Asking a question? Then don't call record_outcome or end_call this turn.
-4b. Already pitched and they said "okay" or similar? Then close: ask when a team member could call them.
+4b. Already pitched and they said "okay", "yes" or similar? Then close: ask when a team member could call them.
 5. Does it start with a delivery tag that fits how they feel right now?""",
-            tools=[EndCallTool(extra_description="Call record_outcome before this.")],
+            # no end_instructions: its default makes the agent say goodbye a second time
+            tools=[EndCallTool(extra_description="Call record_outcome before this.", end_instructions=None)],
         )
 
     def llm_node(self, chat_ctx, tools, model_settings):
+        # The law needs the disclosure first, so the opening comes from code: the model skipped it when the customer spoke first
+        if not self.on_voicemail and not has_disclosed(chat_ctx):
+            return opening_line(self.lead)
         # gpt-4.1-mini still adds a second question now and then, despite the prompt
         return first_question_only(Agent.default.llm_node(self, chat_ctx, tools, model_settings))
 
@@ -182,14 +199,14 @@ Before every reply, check:
             callback_at: The callback_time moment in ISO 8601 with the Irish UTC offset, if they gave a time.
             notes: One-sentence summary of the conversation and any objections.
         """
-        if outcome in ("interested", "callback") and not callback_time:
-            # The sales team can't act on a lead without a time; make the agent ask instead of saving
-            return "Not saved. First ask when and how a team member should follow up, then call record_outcome again with callback_time."
+        if outcome in ("interested", "callback") and not (callback_time and db.parse_time(callback_at, datetime.now(IRELAND))):
+            # The sales team can't act on a lead without a real time; make the agent ask instead of saving
+            return "Not saved. Ask when a team member should call, then call record_outcome again with callback_time and a future callback_at."
         await self.save(
             outcome, interested_services=interested_services, callback_time=callback_time, callback_at=callback_at,
             notes=notes,
         )
-        return "Saved. Now say goodbye and end the call."
+        return "Saved. If you haven't said goodbye yet, say it once now. Then call end_call."
 
     async def save(self, outcome: str, **fields: str) -> None:
         if self.recorded:
@@ -267,7 +284,8 @@ def build_session(vad) -> AgentSession:
 
 def build_amd(session: AgentSession, identity: str) -> AMD:
     # AMD's default STT (cartesia/ink-whisper) isn't served in LiveKit's EU region; reuse the session's model
-    return AMD(session, participant_identity=identity, stt=session.stt)
+    # a silent pick-up would otherwise hear ten seconds of nothing before the agent speaks
+    return AMD(session, participant_identity=identity, stt=session.stt, detection_options={"no_speech_threshold": 4.0})
 
 
 def prewarm(proc: JobProcess) -> None:
@@ -347,6 +365,7 @@ async def sales_call(ctx: agents.JobContext):
 
     # machine-ivr is navigated automatically by AMD; human/uncertain continue as a normal conversation
     if result.category == "machine-vm":
+        agent.on_voicemail = True
         handle = session.generate_reply(
             instructions=f"You reached voicemail. Leave a brief message: you're an AI assistant calling on behalf of {BUSINESS_NAME}, "
             "calling about services that may help them, and a team member will try again. Then stop."

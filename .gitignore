@@ -6,3 +6,4 @@ __pycache__/
 
 # Supabase CLI local state
 supabase/.temp/
+.DS_Store

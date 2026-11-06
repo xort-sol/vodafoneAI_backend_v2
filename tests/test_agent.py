@@ -329,8 +329,59 @@ async def test_follow_up_outcome_without_time_is_refused(call_rows, outcome):
     reply = await agent.record_outcome(None, outcome=outcome)
     assert call_rows() == []  # nothing saved, so the agent can still ask and save later
     assert "when" in reply.lower()
-    await agent.record_outcome(None, outcome=outcome, callback_time="tomorrow 10am")
+    await agent.record_outcome(None, outcome=outcome, callback_time="tomorrow 10am", callback_at="2037-11-03T10:00:00+00:00")
     assert [r["callback_time"] for r in call_rows()] == ["tomorrow 10am"]
+
+
+@pytest.mark.parametrize("callback_at", ["", "now", "2020-01-01T10:00:00+00:00"])
+@pytest.mark.asyncio
+async def test_follow_up_needs_a_real_future_time(call_rows, callback_at):
+    reply = await SalesAgent(JOB_LEAD).record_outcome(None, outcome="interested", callback_time="now", callback_at=callback_at)
+    assert call_rows() == []
+    assert "Not saved" in reply
+
+
+def test_opening_discloses_the_ai_and_uses_only_the_first_name(monkeypatch):
+    monkeypatch.setattr(agent_module, "BUSINESS_NAME", "Vodafone")
+    assert agent_module.opening_line({"name": "Ciaran Walsh"}).startswith(
+        "[warmly] Hi Ciaran, I'm an AI assistant calling on behalf of Vodafone."
+    )
+    assert agent_module.opening_line({"name": ""}).startswith("[warmly] Hi, I'm an AI assistant")
+
+
+def spoken(*lines: str) -> ChatContext:
+    ctx = ChatContext.empty()
+    for line in lines:
+        ctx.add_message(role="assistant", content=line)
+    return ctx
+
+
+def test_first_reply_is_the_scripted_opening_even_if_the_customer_spoke_first():
+    agent = SalesAgent(JOB_LEAD)
+    ctx = ChatContext.empty()
+    ctx.add_message(role="user", content="Hello?")
+    assert agent.llm_node(ctx, [], None) == agent_module.opening_line(JOB_LEAD)
+
+
+def test_opening_is_repeated_if_it_was_cut_off_before_the_disclosure():
+    agent = SalesAgent(JOB_LEAD)
+    assert agent.llm_node(spoken("[warmly] Hi Ciaran, I'm"), [], None) == agent_module.opening_line(JOB_LEAD)
+
+
+def test_after_the_disclosure_the_model_takes_over():
+    agent = SalesAgent(JOB_LEAD)
+    assert not isinstance(agent.llm_node(spoken(agent_module.opening_line(JOB_LEAD)), [], None), str)
+
+
+def test_voicemail_gets_its_own_message_not_the_opening():
+    agent = SalesAgent(JOB_LEAD)
+    agent.on_voicemail = True
+    assert not isinstance(agent.llm_node(ChatContext.empty(), [], None), str)
+
+
+def test_ending_the_call_adds_no_second_goodbye():
+    tools = [t for t in SalesAgent(JOB_LEAD).tools if isinstance(t, agent_module.EndCallTool)]
+    assert tools and tools[0]._end_instructions is None
 
 
 @pytest.mark.asyncio
