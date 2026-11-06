@@ -5,6 +5,7 @@ Callers send a Supabase access token; only admin, sales_manager and salesperson 
 """
 
 import asyncio
+import logging
 import os
 import re
 import uuid
@@ -20,6 +21,7 @@ from pydantic import BaseModel
 from shared import db
 
 load_dotenv()
+logger = logging.getLogger("api")
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
@@ -68,6 +70,7 @@ async def live_rooms() -> list[api.Room]:
     try:
         rooms = await list_rooms()
     except Exception as e:
+        logger.exception("could not list LiveKit rooms")
         raise HTTPException(502, "Could not reach LiveKit") from e
     return [r for r in rooms if CALL_ROOM.match(r.name) and r.num_participants > 0]
 

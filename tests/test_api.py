@@ -98,9 +98,10 @@ def test_token_for_a_room_that_is_not_live_is_404(client, signed_in, rooms):
     assert client.post("/live-token", json={"room": "call-1-1"}, headers=AUTH).status_code == 404
 
 
-def test_livekit_outage_returns_502(client, signed_in, rooms_fail):
+def test_livekit_outage_returns_502_and_logs_why(client, signed_in, rooms_fail, caplog):
     signed_in("salesperson")
     assert client.get("/live-calls", headers=AUTH).status_code == 502
+    assert "livekit down" in caplog.text
 
 
 def test_role_of_reads_the_profile(test_db):
