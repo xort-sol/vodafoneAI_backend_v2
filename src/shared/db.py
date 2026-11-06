@@ -69,7 +69,8 @@ def save_call(row: dict) -> None:
             status, next_at = next_lead_state(row["outcome"], attempts, row["callback_at"], now,
                                               max_attempts, timedelta(hours=retry_hours))
             conn.execute(
-                """update leads set status = %s, next_attempt_at = %s, last_call_at = %s, next_follow_up = %s
+                """update leads set status = %s, next_attempt_at = %s, last_call_at = %s,
+                       next_follow_up = coalesce(%s, next_follow_up)  -- no callback time: keep the date a rep set
                    where id = %s""",
                 [status, next_at, now, row["callback_at"], row["lead_id"]],
             )
@@ -122,7 +123,8 @@ def claim_leads(campaign_id: int, n: int, allowlist: set[str] | None, now: datet
     with _connect() as conn, conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             """update leads set status = 'do_not_call', next_attempt_at = null
-               where campaign_id = %(c)s and status in ('new', 'retry', 'callback') and phone in (select phone from suppression)""",
+               where campaign_id = %(c)s and phone in (select phone from suppression)
+                 and (status in ('new', 'retry', 'callback') or (status = 'dialling' and dialled_at < %(stale)s))""",
             params,
         )
         cur.execute(

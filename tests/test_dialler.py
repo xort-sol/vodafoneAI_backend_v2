@@ -187,6 +187,15 @@ def test_suppressed_lead_moves_to_do_not_call_and_campaign_finishes(test_db, cam
     assert one(test_db, "select status from campaigns") == ("done",)
 
 
+def test_stale_dialling_lead_that_is_suppressed_moves_to_do_not_call_and_campaign_finishes(test_db, campaign):
+    campaign("+1", status="dialling", dialled_at=NOW - timedelta(hours=1), attempts=1)
+    campaign("+2", status="dialling", dialled_at=NOW, attempts=1)  # still in a call: the call's result decides
+    with psycopg.connect(test_db, autocommit=True) as c:
+        c.execute("insert into suppression (phone, source) values ('+1', 'manual'), ('+2', 'manual')")
+    assert db.claim_leads(1, 10, allowlist=None, now=NOW) == []
+    assert statuses(test_db) == {"+1": "do_not_call", "+2": "dialling"}
+
+
 def test_given_up_lead_has_no_next_call_time(test_db, campaign):
     campaign("+1", status="dialling", dialled_at=NOW - timedelta(hours=1), attempts=db.MAX_ATTEMPTS,
              next_attempt_at=NOW - timedelta(hours=2))

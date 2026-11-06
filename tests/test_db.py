@@ -98,6 +98,16 @@ def test_saving_a_call_records_last_call_and_follow_up(call_rows, test_db):
     assert follow_up == datetime(2037, 11, 5, 10, tzinfo=timezone.utc)
 
 
+def test_a_call_with_no_callback_time_keeps_the_follow_up_a_rep_set(call_rows, test_db):
+    lead_id = add_lead(test_db)
+    rep_date = datetime(2037, 11, 5, 10, tzinfo=timezone.utc)
+    with psycopg.connect(test_db) as c:
+        c.execute("update leads set next_follow_up = %s where id = %s", [rep_date, lead_id])
+    db.save_call({"job_id": "j1", "lead_id": lead_id, "outcome": "no_answer"})
+    with psycopg.connect(test_db) as c:
+        assert c.execute("select next_follow_up from leads where id = %s", [lead_id]).fetchone()[0] == rep_date
+
+
 def test_a_callback_redials_at_the_customers_time(call_rows, test_db):
     lead_id = add_lead(test_db)
     db.save_call({"job_id": "j1", "lead_id": lead_id, "outcome": "callback", "callback_time": "Tue 3pm",
