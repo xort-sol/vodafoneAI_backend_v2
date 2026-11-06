@@ -162,7 +162,7 @@ Objection answers:
 
 Before every reply, check:
 0. Have they clearly said yes to talking now? If not (for example they only said "hi"), just ask if now's a good time,
-   like "[warmly] Is now an okay time for a quick chat?". Don't say what the call is about yet.
+   saying exactly "[warmly] Is now an okay time for a quick chat?". Add nothing else: no company, services or reason for the call.
 1. One question only, at the very end. No add-on second question like "Has it been slow or costly?".
 2. Under twenty words.
 3. Did they hint at a problem? Then ask about it; don't pitch yet.
