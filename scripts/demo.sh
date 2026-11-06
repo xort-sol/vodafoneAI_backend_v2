@@ -2,7 +2,9 @@
 # Run the live-call API and the dialler together; Ctrl-C stops both, and so does either one dying. Run from the repo root.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+given=${DIAL_ALLOWLIST-unset}
 set -a; [ -f .env ] && . ./.env; set +a
+[ "$given" = unset ] || DIAL_ALLOWLIST=$given  # a value on the command line beats .env
 allow=${DIAL_ALLOWLIST:-}; allow=${allow//[[:space:]]/}  # the dialler strips too: " *" means any number
 if [ -z "$allow" ] || [ "$allow" = "*" ]; then
   echo "Set DIAL_ALLOWLIST to the numbers the demo may ring, e.g. DIAL_ALLOWLIST=+353871234567 (not empty, not *)." >&2

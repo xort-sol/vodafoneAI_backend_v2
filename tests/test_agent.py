@@ -25,10 +25,6 @@ def test_agent_starts_as_a_module():
     assert out.returncode == 0, out.stderr
 
 
-def test_tests_never_write_to_the_real_sheet():
-    assert not os.getenv("RESULTS_WEBHOOK_URL")
-
-
 @pytest.mark.asyncio
 async def test_outcome_saved_once(call_rows):
     agent = SalesAgent(JOB_LEAD)
@@ -198,7 +194,7 @@ async def test_interested_lead_is_recorded(call_rows):
         result.expect.contains_function_call(name="record_outcome", arguments={"outcome": "interested"})
     row = call_rows()[0]
     assert row["outcome"] == "interested"
-    # "tomorrow" alone is useless once the sheet is read a day later
+    # "tomorrow" alone is useless once the call record is read a day later
     tomorrow = datetime.now(agent_module.IRELAND).date() + timedelta(days=1)
     assert f"{tomorrow.day} {tomorrow:%B}" in row["callback_time"], row["callback_time"]
 
@@ -406,5 +402,5 @@ async def test_voicemail_detector_uses_the_sessions_eu_speech_model():
 
 
 def test_job_gets_time_to_save_and_analyse_after_hang_up():
-    # LiveKit's default is 10 s; hang-up can spend 15 s on the Google Sheet and 30 s on the analysis
+    # LiveKit's default is 10 s; hang-up can spend 30 s on the analysis
     assert agent_module.server._shutdown_process_timeout >= 60

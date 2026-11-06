@@ -12,9 +12,8 @@ MIGRATIONS = Path(__file__).resolve().parents[1] / "supabase" / "migrations"
 
 @pytest.fixture(autouse=True)
 def safe_env(monkeypatch):
-    # importing agent loads .env, with the production database and the sales team's real sheet
+    # importing agent loads .env, with the production database
     monkeypatch.setenv("DATABASE_URL", TEST_DATABASE_URL)
-    monkeypatch.delenv("RESULTS_WEBHOOK_URL", raising=False)
 
 
 @pytest.fixture(scope="session")

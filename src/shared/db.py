@@ -15,7 +15,7 @@ RETRY_AFTER = timedelta(hours=4)
 UNREACHED = {"no_answer", "voicemail", "no_response", "unreachable"}
 CLOSED = {"not_interested", "hung_up"}
 IRELAND = ZoneInfo("Europe/Dublin")
-CALLABLE = "consent and not archived and sales_status is null"  # leads the dialler may still ring
+CALLABLE = "consent and not archived and sales_status is null and assigned_to is null"  # leads the dialler may still ring
 
 
 def _connect() -> psycopg.Connection:

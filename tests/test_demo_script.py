@@ -28,6 +28,16 @@ def test_when_one_process_dies_the_other_stops_and_the_script_fails(tmp_path):
         os.kill(int(api_pid.read_text()), 0)
 
 
-def test_script_refuses_without_an_allowlist():
-    done = subprocess.run(["/bin/bash", SCRIPT], env={**os.environ, "DIAL_ALLOWLIST": " * "}, capture_output=True, text=True)
+def test_script_refuses_a_bad_allowlist_even_when_env_file_has_a_good_one(tmp_path):
+    # a copy with its own .env, and a fake uv: this test must never be able to start the real dialler
+    (tmp_path / "scripts").mkdir()
+    script = tmp_path / "scripts" / "demo.sh"
+    script.write_text(SCRIPT.read_text())
+    (tmp_path / ".env").write_text("DIAL_ALLOWLIST=+353870000001\n")
+    uv = tmp_path / "uv"
+    uv.write_text('#!/bin/bash\ntouch "$(dirname "$0")/started"\nsleep 60\n')
+    uv.chmod(0o755)
+    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "DIAL_ALLOWLIST": " * "}
+    done = subprocess.run(["/bin/bash", script], env=env, start_new_session=True, capture_output=True, text=True, timeout=10)
     assert done.returncode == 1 and "DIAL_ALLOWLIST" in done.stderr
+    assert not (tmp_path / "started").exists()

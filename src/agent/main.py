@@ -196,7 +196,7 @@ Before every reply, check:
             return
         self.recorded = True
         self.outcome = outcome
-        # The Google Sheet request can take a second; keep it off the audio loop
+        # A database write can take a second; keep it off the audio loop
         await asyncio.to_thread(record_result, {**self.lead, "outcome": outcome, **fields})
         logger.info("recorded outcome %s for %s", outcome, self.lead.get("phone"))
 
@@ -274,7 +274,7 @@ def prewarm(proc: JobProcess) -> None:
     proc.userdata["vad"] = silero.VAD.load()
 
 
-# LiveKit's 10 s default can cut off the hang-up work: Google Sheet (15 s timeout) and analysis (30 s)
+# LiveKit's 10 s default can cut off the hang-up work: the analysis alone can take 30 s
 server = AgentServer(shutdown_process_timeout=60)
 server.setup_fnc = prewarm
 

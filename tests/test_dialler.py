@@ -170,6 +170,16 @@ def test_archived_lead_is_never_claimed(test_db, campaign):
     assert db.claim_leads(1, 10, allowlist=None, now=NOW) == []
 
 
+def test_lead_assigned_to_a_rep_is_not_claimed_and_does_not_hold_the_campaign_open(test_db, campaign):
+    with psycopg.connect(test_db, autocommit=True) as conn:
+        conn.execute("insert into auth.users (id, email) values ('00000000-0000-0000-0000-00000000000a', 'rep@test') on conflict do nothing")
+    campaign("+1", assigned_to="00000000-0000-0000-0000-00000000000a", status="callback")
+    assert db.claim_leads(1, 10, allowlist=None, now=NOW) == []
+    db.finish_campaign_if_empty(1)
+    with psycopg.connect(test_db) as conn:
+        assert conn.execute("select status from campaigns where id = 1").fetchone()[0] == "done"
+
+
 def test_lead_with_sales_status_is_not_claimed_and_does_not_hold_the_campaign_open(test_db, campaign):
     campaign("+1", sales_status="Not interested", status="retry")
     assert db.claim_leads(1, 10, allowlist=None, now=NOW) == []
