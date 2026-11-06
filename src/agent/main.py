@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import AsyncIterable, Literal
 from zoneinfo import ZoneInfo
@@ -63,10 +63,19 @@ async def first_question_only(chunks: AsyncIterable) -> AsyncIterable:
             yield chunk
 
 
+def in_sales_hours(callback_at: str) -> str:
+    """"Ring me at 3" means the afternoon, but the model writes 03:00 whatever the prompt says, so a time before 8am moves on 12 hours."""
+    try:
+        moment = datetime.fromisoformat(callback_at)
+    except ValueError:
+        return callback_at
+    return (moment + timedelta(hours=12)).isoformat() if moment.hour < 8 else callback_at
+
+
 def opening_line(lead: dict) -> str:
     first_name = (lead.get("name") or "").split()[:1]
     greeting = f"Hi {first_name[0]}" if first_name else "Hi"
-    return f"[warmly] {greeting}, I'm an AI assistant calling on behalf of {BUSINESS_NAME}. Is now an okay time for a quick chat?"
+    return f"{greeting}, I'm an AI assistant calling on behalf of {BUSINESS_NAME}. Is now an okay time for a quick chat?"
 
 
 def has_disclosed(chat_ctx) -> bool:
@@ -75,7 +84,7 @@ def has_disclosed(chat_ctx) -> bool:
 
 
 def transcript_lines(items, started_at: float) -> list[tuple[str, str, int]]:
-    """What was said, in order: (agent or customer, text, seconds from started_at). Delivery tags stay; the web app hides them."""
+    """What was said, in order: (agent or customer, text, seconds from started_at). """
     speakers = {"assistant": "agent", "user": "customer"}
     return [
         (speakers[i.role], i.text_content, round(i.created_at - started_at))
@@ -116,15 +125,14 @@ How you talk:
   with no new details, and ask the same question again.
 - Say numbers and prices the way people speak them ("forty euro a month"). No symbols, lists, abbreviations or markdown.
 
-How you sound (your voice reads these marks; the customer never sees them):
-- Start every turn with one delivery tag in square brackets that fits the moment: [warmly], [curious], [empathetic],
-  [reassuring], [thoughtful], [excited] or [cheerfully]. You may add a second tag before a later sentence when the mood shifts.
+How you sound:
+- Never write tags or stage directions in square brackets: everything you write is spoken.
 - Let the mood build across the call. Start relaxed and friendly, get warmer as they open up, sound genuinely pleased when they say yes.
-  Match their feelings: if they're frustrated, sound sympathetic, not cheerful. Save [excited] for real good news.
+  Match their feelings: if they're frustrated, sound sympathetic, not cheerful.
 - Slow down for what matters: put "..." before the price or a key point, and keep that sentence short.
 - Stress the one word that carries the point in CAPITALS, at most once per turn: "that's REALLY frustrating", "it starts at... forty euro".
-- Tags and capitals don't count toward your twenty words.
-  Example: "[empathetic] Oh, that's REALLY frustrating. [curious] What happens when it drops?"
+- Capitals don't count toward your twenty words.
+  Example: "Oh, that's REALLY frustrating. What happens when it drops?"
 
 How the call goes:
 - Open: your first line is spoken for you: it greets them, says you're an AI assistant calling on behalf of {BUSINESS_NAME}, and asks if now's okay. Don't repeat it.
@@ -162,13 +170,12 @@ Objection answers:
 
 Before every reply, check:
 0. Have they clearly said yes to talking now? If not (for example they only said "hi"), just ask if now's a good time,
-   saying exactly "[warmly] Is now an okay time for a quick chat?". Add nothing else: no company, services or reason for the call.
+   saying exactly "Is now an okay time for a quick chat?". Add nothing else: no company, services or reason for the call.
 1. One question only, at the very end. No add-on second question like "Has it been slow or costly?".
 2. Under twenty words.
 3. Did they hint at a problem? Then ask about it; don't pitch yet.
 4. Asking a question? Then don't call record_outcome or end_call this turn.
-4b. Already pitched and they said "okay", "yes" or similar? Then close: ask when a team member could call them.
-5. Does it start with a delivery tag that fits how they feel right now?""",
+4b. Already pitched and they said "okay", "yes" or similar? Then close: ask when a team member could call them.""",
             # no end_instructions: its default makes the agent say goodbye a second time
             tools=[EndCallTool(extra_description="Call record_outcome before this.", end_instructions=None)],
         )
@@ -199,6 +206,7 @@ Before every reply, check:
             callback_at: The callback_time moment in ISO 8601 with the Irish UTC offset, if they gave a time.
             notes: One-sentence summary of the conversation and any objections.
         """
+        callback_at = in_sales_hours(callback_at)
         if outcome in ("interested", "callback") and not (callback_time and db.parse_time(callback_at, datetime.now(IRELAND))):
             # The sales team can't act on a lead without a real time; make the agent ask instead of saving
             return "Not saved. Ask when a team member should call, then call record_outcome again with callback_time and a future callback_at."
@@ -265,7 +273,7 @@ def build_session(vad) -> AgentSession:
         llm=inference.LLM(model=LLM_MODEL),
         tts=elevenlabs.TTS(
             voice_id=os.getenv("ELEVEN_VOICE_ID") or elevenlabs.tts.DEFAULT_VOICE_ID,
-            # expressive and as fast as flash in our test (0.17s to first audio); reads [warmly]-style tags.
+            # expressive and as fast as flash in our test (0.17s to first audio).
             # Only stability applies: pacing comes from the text ("...", short sentences, CAPS for stress)
             model="eleven_v4_turbo",
             voice_settings=elevenlabs.VoiceSettings(stability=0.4, similarity_boost=0.8),

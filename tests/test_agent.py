@@ -174,7 +174,7 @@ async def test_session_uses_vad_adaptive_interruptions_and_elevenlabs(monkeypatc
     assert session.options.endpointing["mode"] == "dynamic"
     assert session.options.endpointing["max_delay"] == 1.5
     assert session.options.preemptive_generation["preemptive_tts"] is True  # starts speaking sooner
-    assert session.tts.model == "eleven_v4_turbo"  # reads [warmly]-style tags, so delivery follows the conversation
+    assert session.tts.model == "eleven_v4_turbo"
 
 
 
@@ -341,12 +341,21 @@ async def test_follow_up_needs_a_real_future_time(call_rows, callback_at):
     assert "Not saved" in reply
 
 
+@pytest.mark.parametrize("given, saved_hour", [("03:00", 15), ("07:30", 19), ("08:00", 8), ("15:00", 15)])
+@pytest.mark.asyncio
+async def test_callback_before_8am_means_the_afternoon(call_rows, given, saved_hour):
+    await SalesAgent(JOB_LEAD).record_outcome(
+        None, outcome="callback", callback_time="at 3", callback_at=f"2037-11-03T{given}:00+00:00"
+    )
+    assert call_rows()[0]["callback_at"].astimezone(timezone.utc).hour == saved_hour
+
+
 def test_opening_discloses_the_ai_and_uses_only_the_first_name(monkeypatch):
     monkeypatch.setattr(agent_module, "BUSINESS_NAME", "Vodafone")
     assert agent_module.opening_line({"name": "Ciaran Walsh"}).startswith(
-        "[warmly] Hi Ciaran, I'm an AI assistant calling on behalf of Vodafone."
+        "Hi Ciaran, I'm an AI assistant calling on behalf of Vodafone."
     )
-    assert agent_module.opening_line({"name": ""}).startswith("[warmly] Hi, I'm an AI assistant")
+    assert agent_module.opening_line({"name": ""}).startswith("Hi, I'm an AI assistant")
 
 
 def spoken(*lines: str) -> ChatContext:
@@ -365,7 +374,7 @@ def test_first_reply_is_the_scripted_opening_even_if_the_customer_spoke_first():
 
 def test_opening_is_repeated_if_it_was_cut_off_before_the_disclosure():
     agent = SalesAgent(JOB_LEAD)
-    assert agent.llm_node(spoken("[warmly] Hi Ciaran, I'm"), [], None) == agent_module.opening_line(JOB_LEAD)
+    assert agent.llm_node(spoken("Hi Ciaran, I'm"), [], None) == agent_module.opening_line(JOB_LEAD)
 
 
 def test_after_the_disclosure_the_model_takes_over():
@@ -409,15 +418,13 @@ async def test_okay_after_pitch_leads_to_asking_for_callback_time(call_rows):
 
 @LIVE
 @pytest.mark.asyncio
-async def test_frustrated_customer_gets_an_empathetic_delivery_tag(call_rows):
+async def test_replies_carry_no_delivery_tags(call_rows):
     async with inference.LLM(model=agent_module.LLM_MODEL) as llm, AgentSession(llm=llm) as session:
         await session.start(SalesAgent(JOB_LEAD))
         await session.run(user_input="Yes, go ahead.")
         result = await session.run(user_input="Honestly it's been a nightmare, our internet drops every single afternoon.")
         reply = result.expect.next_event().is_message(role="assistant").event().item.text_content
-    # the voice only sounds sympathetic if the line carries a tag such as [empathetic]
-    assert reply.lstrip().startswith("["), reply
-    assert not reply.lstrip().startswith(("[excited]", "[cheerfully]")), reply  # match their mood
+    assert "[" not in reply, reply  # everything the model writes is spoken
 
 
 @pytest.mark.asyncio
