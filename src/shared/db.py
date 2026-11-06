@@ -196,6 +196,19 @@ def save_call_stats(job_id: str, duration_s: int, avg_latency_ms: int | None) ->
         )
 
 
+def reset_demo_leads(numbers: set[str]) -> int:
+    """Puts these numbers' leads back to never-called and lifts their suppression, for the next rehearsal. Returns the leads reset."""
+    phones = sorted(numbers)
+    with _connect() as conn:
+        conn.execute("delete from suppression where phone = any(%s)", [phones])
+        return conn.execute(
+            """update leads set status = 'new', attempts = 0, next_attempt_at = null, dialled_at = null,
+                                sales_status = null, consent = true, campaign_id = null
+               where phone = any(%s)""",
+            [phones],
+        ).rowcount
+
+
 def role_of(user_id: str) -> str | None:
     """The web app role an admin gave this user, or None (no profile, or no role yet)."""
     with _connect() as conn:

@@ -1,13 +1,18 @@
 import logging
 import os
+import subprocess
+import sys
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import psycopg
 import pytest
 
 from shared import db
 from shared.results import record_result
+
+SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 
 
 def test_tests_use_the_test_database():
@@ -149,3 +154,47 @@ def test_the_campaigns_retry_settings_decide_the_next_call(call_rows, test_db):
         c.execute("update leads set campaign_id = 1")
     db.save_call({"job_id": "j1", "lead_id": lead_id, "outcome": "no_answer"})
     assert lead(test_db, lead_id) == ("exhausted", 1, None)
+
+
+def test_reset_demo_leads_changes_only_the_listed_numbers(call_rows, test_db):
+    listed, other = "+353870000001", "+353870000002"
+    with psycopg.connect(test_db) as c:
+        c.execute("truncate leads, campaigns cascade")
+        campaign = c.execute("insert into campaigns (name, status) values ('c', 'running') returning id").fetchone()[0]
+        for phone in (listed, other):
+            c.execute(
+                """insert into leads (phone, status, attempts, next_attempt_at, dialled_at, sales_status, consent, campaign_id)
+                   values (%s, 'do_not_call', 2, now(), now(), 'Hot', false, %s)""",
+                [phone, campaign],
+            )
+            c.execute("insert into suppression (phone, source) values (%s, 'call')", [phone])
+    assert db.reset_demo_leads({listed}) == 1
+    columns = "status, attempts, next_attempt_at, dialled_at, sales_status, consent, campaign_id"
+    with psycopg.connect(test_db) as c:
+        row = c.execute(f"select {columns} from leads where phone = %s", [listed]).fetchone()
+        untouched = c.execute("select status, attempts, sales_status, consent, campaign_id from leads where phone = %s", [other]).fetchone()
+        suppressed = c.execute("select phone from suppression").fetchall()
+    assert row == ("new", 0, None, None, None, True, None)
+    assert untouched == ("do_not_call", 2, "Hot", False, campaign)
+    assert suppressed == [(other,)]
+
+
+@pytest.mark.parametrize("value", ["", "  ", "*", " * ", "*, +353870000001"])
+def test_reset_script_refuses_without_a_real_allowlist(call_rows, test_db, value):
+    with psycopg.connect(test_db) as c:
+        c.execute("truncate leads cascade")
+        c.execute("insert into leads (phone, status, consent) values ('+353870000001', 'closed', false)")
+    done = subprocess.run([sys.executable, SCRIPTS / "reset_demo.py"], env={**os.environ, "DIAL_ALLOWLIST": value}, capture_output=True, text=True)
+    assert done.returncode != 0 and "DIAL_ALLOWLIST" in done.stderr
+    with psycopg.connect(test_db) as c:
+        assert c.execute("select status from leads").fetchall() == [("closed",)]
+
+
+def test_reset_script_resets_the_allowlisted_numbers(call_rows, test_db):
+    with psycopg.connect(test_db) as c:
+        c.execute("truncate leads cascade")
+        c.execute("insert into leads (phone, status, consent) values ('+353870000001', 'closed', false)")
+    done = subprocess.run([sys.executable, SCRIPTS / "reset_demo.py"], env={**os.environ, "DIAL_ALLOWLIST": " +353870000001 "}, capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    with psycopg.connect(test_db) as c:
+        assert c.execute("select status, consent from leads").fetchall() == [("new", True)]
