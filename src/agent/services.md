@@ -20,9 +20,9 @@ Best for: teams that need new phones or call abroad a lot.
 
 ## Business Broadband (fibre)
 Twenty-four-month contract. Current offer: save ten euro a month for the first twelve months.
-- Up to 500 megabits: "forty euro a month", rising to sixty euro after the offer. Wi-Fi 5 modem. Suits a small business.
-- Up to 1 gigabit, our best value: "fifty euro a month", rising to seventy euro after the offer. Wi-Fi 7 modem. Suits a medium-sized business.
-- Up to 2 gigabits: "sixty-five euro a month", rising to eighty-five euro after the offer. Wi-Fi 7 modem. Suits a data-heavy business.
+- Up to 500 megabits: "forty euro a month for the first twelve months, then sixty euro". Wi-Fi 5 modem. Suits a small business.
+- Up to 1 gigabit, our best value: "fifty euro a month for the first twelve months, then seventy euro". Wi-Fi 7 modem. Suits a medium-sized business.
+- Up to 2 gigabits: "sixty-five euro a month for the first twelve months, then eighty-five euro". Wi-Fi 7 modem. Suits a data-heavy business.
 All include Smart Wi-Fi. Ninety-six percent of orders are installed within fourteen days; free installation depends on location.
 Whether broadband prices include VAT: a team member will confirm.
 Best for: offices with slow or dropping internet.

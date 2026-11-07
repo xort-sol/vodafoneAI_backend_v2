@@ -388,9 +388,17 @@ def test_voicemail_gets_its_own_message_not_the_opening():
     assert not isinstance(agent.llm_node(ChatContext.empty(), [], None), str)
 
 
-def test_ending_the_call_adds_no_second_goodbye():
+def test_ending_the_call_says_the_one_goodbye_with_the_agreed_time():
     tools = [t for t in SalesAgent(JOB_LEAD).tools if isinstance(t, agent_module.EndCallTool)]
-    assert tools and tools[0]._end_instructions is None
+    assert tools and "goodbye" in tools[0]._end_instructions and "callback time" in tools[0]._end_instructions
+    assert "say nothing yourself" in SalesAgent(JOB_LEAD).instructions
+
+
+def test_offer_prices_are_quoted_with_what_they_rise_to():
+    for quote in ("forty euro a month for the first twelve months, then sixty euro",
+                  "fifty euro a month for the first twelve months, then seventy euro",
+                  "sixty-five euro a month for the first twelve months, then eighty-five euro"):
+        assert quote in agent_module.SERVICES
 
 
 @pytest.mark.asyncio

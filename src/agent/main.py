@@ -32,6 +32,8 @@ TEST_LEAD = {"name": "", "phone": "", "company": "", "notes": ""}
 
 LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-4.1-mini")
 
+GOODBYE = "Say one short, friendly goodbye with no question. If a callback time was agreed, repeat it so they know what happens next."
+
 Outcome = Literal["interested", "callback", "not_interested", "do_not_call"]
 
 
@@ -143,6 +145,8 @@ How the call goes:
 - Pitch: pick the one service that fits what they told you. Give the main benefit and the starting price in one short sentence,
   then ask if they'd like to hear more. Share more details only if they ask. Don't open with "you mentioned".
   Never ask them to choose between plans or speeds; a team member helps pick on the follow-up call.
+  If they ask about other plans, answer in one short sentence (for example, there are faster ones up to two gigabits),
+  then say a team member will help them pick.
 - Objections: acknowledge it in a few words, then give the matching answer from the objection answers below, in your own short words.
   Don't repeat the pitch or the price.
   Then ask if they'd like a team member to follow up or would rather leave it, and respect their answer. Never push twice.
@@ -150,14 +154,14 @@ How the call goes:
   If they sound interested or give a soft reply like "okay", "sounds good" or "maybe", ask just "When would suit a team member
   to give you a call about it?", with no extra "would you like" question in front. If they say they're not interested, respect that.
   A "yes" or "sure" to a follow-up is not a time: ask when, and never write "now" or invent one.
-  If they stay vague, ask for a day and a rough time. Once they give a time, record_outcome "interested" with that callback_time.
+  If they stay vague, ask for a day and a rough time. Team members call Monday to Friday: if they pick a Saturday or Sunday,
+  ask if Monday at that time suits. Once they give a time, record_outcome "interested" with that callback_time.
   Write callback_time as the time they said plus the exact day and date, worked out from today's date,
   like "tomorrow at 10am (Saturday 31 October), by phone". Never guess a time they didn't give.
   Also pass callback_at: the same moment in ISO 8601 using the UTC offset given above.
-  In your goodbye, repeat the time they gave you so they know what happens next.
   If they're not, thank them warmly and record_outcome "not_interested". If they ask not to be called again, apologise and record_outcome "do_not_call".
 - Only record an outcome once the customer has clearly answered. Never call record_outcome or end_call in a turn where you ask a question;
-  wait for their reply first. After record_outcome, say one short friendly goodbye with no question and call end_call in that same turn.
+  wait for their reply first. After record_outcome, call end_call straight away and say nothing yourself: ending the call says the goodbye.
 
 Rules: only use facts and prices from the services below. If you don't know something, say a team member will follow up with the details.
 Call record_outcome exactly once, before ending the call.
@@ -176,8 +180,8 @@ Before every reply, check:
 3. Did they hint at a problem? Then ask about it; don't pitch yet.
 4. Asking a question? Then don't call record_outcome or end_call this turn.
 4b. Already pitched and they said "okay", "yes" or similar? Then close: ask when a team member could call them.""",
-            # no end_instructions: its default makes the agent say goodbye a second time
-            tools=[EndCallTool(extra_description="Call record_outcome before this.", end_instructions=None)],
+            # the only goodbye: the model saying its own as well gave two, and no instructions gave none
+            tools=[EndCallTool(extra_description="Call record_outcome before this.", end_instructions=GOODBYE)],
         )
 
     def llm_node(self, chat_ctx, tools, model_settings):
@@ -214,7 +218,7 @@ Before every reply, check:
             outcome, interested_services=interested_services, callback_time=callback_time, callback_at=callback_at,
             notes=notes,
         )
-        return "Saved. If you haven't said goodbye yet, say it once now. Then call end_call."
+        return "Saved. Now call end_call."
 
     async def save(self, outcome: str, **fields: str) -> None:
         if self.recorded:
