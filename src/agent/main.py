@@ -52,7 +52,7 @@ def specialist_phone(value: str) -> str:
 
 # Only ever from env, never from the model
 SALES_SPECIALIST_PHONE = specialist_phone(os.getenv("SALES_SPECIALIST_PHONE", ""))
-TRANSFER_TIMEOUT_S = 120  # ringing (25 s) plus briefing; past this the customer has waited on hold too long
+TRANSFER_TIMEOUT_S = 180  # ringing (25 s) plus a long briefing; past this the customer has waited on hold too long
 
 
 def who_line(lead: dict) -> str:
@@ -113,6 +113,15 @@ def transcript_lines(items, started_at: float) -> list[tuple[str, str, int]]:
     ]
 
 
+def ireland_now() -> datetime:
+    return datetime.now(IRELAND)  # a function so tests can set the clock
+
+
+def in_working_hours(now: datetime) -> bool:
+    """Specialists take transfers Monday to Friday, 9:00 to 17:30 Irish time."""
+    return now.weekday() < 5 and (9, 0) <= (now.hour, now.minute) < (17, 30)
+
+
 def now_line(now: datetime) -> str:
     return f"Right now it's {now:%A} {now.day} {now:%B %Y}, {now:%-I:%M %p} in Ireland. UTC offset: {now.isoformat()[-6:]}"
 
@@ -123,7 +132,8 @@ class SalesAgent(Agent):
         self.phone_mode = phone_mode
         self.transferring = False  # set from dialling the specialist onwards: the AI must never speak over them
         self.transfer_failed = False
-        can_transfer = bool(SALES_SPECIALIST_PHONE and phone_mode)
+        now = ireland_now()
+        self.can_transfer = can_transfer = bool(SALES_SPECIALIST_PHONE and phone_mode and in_working_hours(now))
         self.recorded = False
         self.started_at = time.time()  # wall clock, to date each transcript line
         self.outcome = ""
@@ -134,7 +144,7 @@ class SalesAgent(Agent):
             instructions=f"""You are Sam, a warm, relaxed sales rep for {BUSINESS_NAME}, talking to a customer on the phone.
 You are an AI assistant and must say so in your first sentence.
 
-{now_line(datetime.now(IRELAND))}
+{now_line(now)}
 {who_line(lead)} {lead_facts(lead)}
 Use what we know to skip questions it already answers (a contract ending soon is a good moment to compare),
 but don't read it back to them.
@@ -183,12 +193,13 @@ How the call goes:
   If they correct you, thank them and use the corrected facts.
 - Next step: pick the one that fits what you learned, suggest it, and go ahead only if they agree.
   - They want to talk to someone now: {"offer to put them through to a sales specialist. Once they clearly agree to go now, call transfer_to_specialist." if can_transfer else "offer a callback with a team member."}
-  - Callback with a team member: ask "Would tomorrow or the next day suit?", then "Morning or afternoon?", then confirm the exact day and time.
+  - Callback with a team member: ask "Would tomorrow or the next working day suit?", then "Morning or afternoon?", then confirm the exact day and time.
     record_outcome "interested".
   - Field visit: for several sites, connections or services, a more complex setup, or if they'd rather meet, offer a visit from a team member.
-    Ask when suits, the address, and who they'll meet. record_outcome "field_visit" with visit_address, contact_name, and attendees if they said.
-  - Renewal: if they're in contract and open to comparing before it renews, ask when it ends, then agree a time before then.
-    record_outcome "callback" with reason "renewal" and contract_end. If "What we know" gives the contract end, use that date rather than "unknown"; pass "unknown" only if nobody knows.
+    Ask which services the visit is about, when suits, the address, and who they'll meet.
+    record_outcome "field_visit" with visit_address, contact_name, products, and attendees if they said.
+  - Renewal: if they're in contract and open to comparing before it renews, ask when it ends, then agree a time before then
+    for a team member to call. record_outcome "interested" with reason "renewal", contract_end, and callback_at before the contract ends. If "What we know" gives the contract end, use that date rather than "unknown"; pass "unknown" only if nobody knows.
   - Email: if they'd rather get details by email, ask which services interest them, then their business email, and read it back.
     record_outcome "email_request" with email and products.
   A "yes" or "sure" is not a time: ask when, and never write "now" or invent one.
@@ -253,19 +264,20 @@ Before every reply, check:
         """Save the result of this call for the sales team.
 
         Args:
-            outcome: interested (a team member calls them), callback (we ring back), not_interested, do_not_call,
+            outcome: interested (a team member calls them, including a renewal), callback (only when it's a bad time: we ring back),
+                not_interested, do_not_call,
                 field_visit (they asked for a visit), or email_request (they asked for details by email).
             interested_services: Services the customer showed interest in, comma separated.
             callback_time: When and how the customer wants to be contacted, or when suits for the visit, if they said.
             callback_at: The callback_time moment in ISO 8601 with the Irish UTC offset, if they gave a time.
             notes: One-sentence summary of the conversation and any objections.
-            reason: renewal for a callback before their contract renews; otherwise callback.
+            reason: renewal for a team member's call before their contract renews; otherwise callback.
             contract_end: For a renewal: when their contract ends as YYYY-MM-DD, or "unknown" if they don't know.
             visit_address: For a field visit: the address to visit.
             contact_name: For a field visit: who to meet.
             attendees: For a field visit: anyone else who'll be there, if they said.
             email: For an email request: their business email address.
-            products: For an email request: the services they want details on.
+            products: For an email request or field visit: the services they want details on, or the visit is about.
         """
         callback_at = in_sales_hours(callback_at)
         when = db.parse_time(callback_at, datetime.now(IRELAND)) if callback_time else None
@@ -310,7 +322,9 @@ Before every reply, check:
         Args:
             brief: For the specialist: the business, current provider, what they pay, their main pain point and what they want.
         """
-        if not (SALES_SPECIALIST_PHONE and self.phone_mode):
+        if self.transfer_failed:
+            return "The specialist isn't available. Offer a callback."  # one attempt only: never ring them again
+        if not self.can_transfer:
             return "Transfer isn't available. Offer a callback with a team member instead."
         self.transferring = True
         watchdog = None

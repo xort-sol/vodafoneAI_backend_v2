@@ -566,8 +566,27 @@ def test_prompt_covers_the_discovery_flow_and_never_claims_a_booking():
     assert "who'll confirm" not in instructions and "will email you" not in instructions  # the goodbye says it, once
     for phrase in ("Have I got that right?", "Not when it's a bad time",
                    "use that date rather than \"unknown\"",
-                   "Would tomorrow or the next day suit?", "Morning or afternoon?"):
+                   "Would tomorrow or the next working day suit?", "Morning or afternoon?"):
         assert phrase in instructions, phrase
+
+
+def test_renewal_is_a_follow_up_by_a_person_and_callback_is_only_a_bad_time_redial():
+    instructions = SalesAgent(JOB_LEAD).instructions
+    assert 'record_outcome "interested" with reason "renewal"' in instructions
+    assert 'callback_at before the contract ends' in instructions
+    assert 'record_outcome "callback" with reason "renewal"' not in instructions
+    assert instructions.count('record_outcome "callback"') == 1  # the bad-time re-dial only
+
+
+def test_prompt_never_offers_a_weekend_day_as_the_next_day():
+    assert "tomorrow or the next day" not in SalesAgent(JOB_LEAD).instructions
+
+
+@pytest.mark.asyncio
+async def test_field_visit_prompt_asks_which_services_and_saves_them(call_rows):
+    assert 'record_outcome "field_visit" with visit_address, contact_name, products' in SalesAgent(JOB_LEAD).instructions
+    await SalesAgent(JOB_LEAD).record_outcome(None, **VISIT, products="broadband, mobiles")
+    assert call_rows()[0]["follow_up"]["products"] == "broadband, mobiles"
 
 
 def test_goodbye_never_claims_a_visit_or_email_is_done():
@@ -586,6 +605,7 @@ async def test_renewal_guard_also_applies_to_an_interested_outcome(call_rows, co
 
 # --- Live transfer to a sales specialist (WarmTransferTask mocked: nothing dials) ---
 SPECIALIST = "+353871234567"
+WORKING_HOURS = datetime(2037, 11, 3, 10, 0, tzinfo=agent_module.IRELAND)  # a Tuesday morning
 BRIEF = "Bakery, 6 staff, Eir broadband at sixty a month, drops at lunch, wants a steadier line."
 
 
@@ -615,6 +635,7 @@ def transfer(monkeypatch):
     """Transfer configured and in phone mode; records what was dialled and whether the job shut down."""
     monkeypatch.setattr(agent_module, "SALES_SPECIALIST_PHONE", SPECIALIST)
     monkeypatch.setenv("SIP_OUTBOUND_TRUNK_ID", "ST_test")
+    monkeypatch.setattr(agent_module, "ireland_now", lambda: WORKING_HOURS)
     seen = {"dialled": [], "shutdown": []}
     monkeypatch.setattr(agent_module, "get_job_context",
                         lambda: type("Job", (), {"shutdown": lambda self, reason="": seen["shutdown"].append(reason)})())
@@ -650,6 +671,7 @@ async def test_transfer_refused_when_off_or_not_on_a_phone_line(call_rows, trans
 @pytest.mark.parametrize("number, phone_mode, offered", [(SPECIALIST, True, True), ("", True, False), (SPECIALIST, False, False)])
 def test_prompt_offers_transfer_only_when_it_can_happen(monkeypatch, number, phone_mode, offered):
     monkeypatch.setattr(agent_module, "SALES_SPECIALIST_PHONE", number)
+    monkeypatch.setattr(agent_module, "ireland_now", lambda: WORKING_HOURS)
     instructions = SalesAgent(JOB_LEAD, phone_mode=phone_mode).instructions
     assert ("transfer_to_specialist" in instructions) == offered
     assert ("put them through" in instructions) == offered
@@ -741,3 +763,42 @@ def test_silence_never_hangs_up_while_ringing_or_transferring():
     assert agent.silence_counts()
     agent.transferring = True  # on hold for the specialist: input is off, so it always looks silent
     assert not agent.silence_counts()
+
+
+@pytest.mark.parametrize("moment, open_", [
+    (datetime(2037, 11, 2, 9, 0), True),     # Monday opening
+    (datetime(2037, 11, 6, 17, 29), True),   # Friday, just before close
+    (datetime(2037, 11, 2, 8, 59), False),
+    (datetime(2037, 11, 6, 17, 30), False),
+    (datetime(2037, 11, 7, 11, 0), False),   # Saturday
+    (datetime(2037, 11, 8, 11, 0), False),   # Sunday
+])
+def test_specialists_take_transfers_only_in_working_hours(moment, open_):
+    assert agent_module.in_working_hours(moment.replace(tzinfo=agent_module.IRELAND)) is open_
+
+
+@pytest.mark.asyncio
+async def test_out_of_hours_the_prompt_offers_no_transfer_and_the_tool_refuses(call_rows, transfer, monkeypatch):
+    monkeypatch.setattr(agent_module, "ireland_now", lambda: datetime(2037, 11, 7, 11, 0, tzinfo=agent_module.IRELAND))
+    transfer["use"](lambda: pytest.fail("must not dial"))
+    agent = SalesAgent(JOB_LEAD, phone_mode=True)
+    assert "transfer_to_specialist" not in agent.instructions
+    reply = await agent.transfer_to_specialist(None, brief=BRIEF)
+    assert "callback" in reply.lower() and transfer["dialled"] == [] and not agent.transferring
+
+
+@pytest.mark.asyncio
+async def test_a_failed_transfer_is_never_tried_again(call_rows, transfer):
+    async def fails():
+        raise agent_module.ToolError("could not dial human agent")
+
+    transfer["use"](fails)
+    agent = SalesAgent(JOB_LEAD, phone_mode=True)
+    await agent.transfer_to_specialist(None, brief=BRIEF)
+    reply = await agent.transfer_to_specialist(None, brief=BRIEF)
+    assert reply == "The specialist isn't available. Offer a callback."
+    assert len(transfer["dialled"]) == 1 and not agent.transferring
+
+
+def test_watchdog_allows_for_a_long_briefing():
+    assert agent_module.TRANSFER_TIMEOUT_S == 180
