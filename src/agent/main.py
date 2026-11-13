@@ -33,7 +33,9 @@ TEST_LEAD = {"name": "", "phone": "", "company": "", "notes": ""}
 
 LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-4.1-mini")
 
-GOODBYE = "Say one short, friendly goodbye with no question. If a callback time was agreed, repeat it so they know what happens next."
+GOODBYE = ("Say one short, friendly goodbye with no question. If a callback time was agreed, repeat it so they know what happens next. "
+           "For a visit request, say the team will confirm the visit time. For an email request, say a team member will email them. "
+           "Never say anything is booked, confirmed or sent.")
 
 Outcome = Literal["interested", "callback", "not_interested", "do_not_call", "field_visit", "email_request"]
 # calls.follow_up's reason for each outcome a person (or the dialler) follows up
@@ -160,7 +162,8 @@ How the call goes:
   for mobiles "around a hundred, two fifty, or five hundred plus a month?".
   Aim for three to five minutes; take longer only if they're engaged and the opportunity is bigger.
   If they ask a price, give it exactly as written in the services below, then carry on with your questions.
-- Summarise: before any next step, one turn that sums up the key facts, ending "Have I got that right?".
+- Summarise: once discovery is done, before suggesting a next step, one turn that sums up the key facts, ending "Have I got that right?".
+  Not when it's a bad time, they want an email straight away, or they're not interested: go straight to that.
   If they correct you, thank them and use the corrected facts.
 - Next step: pick the one that fits what you learned, suggest it, and go ahead only if they agree.
   - They want to talk to someone now: if a transfer_to_specialist tool is available, offer to put them through. Otherwise offer a callback.
@@ -168,11 +171,10 @@ How the call goes:
     record_outcome "interested".
   - Field visit: for several sites, connections or services, a more complex setup, or if they'd rather meet, offer a visit from a team member.
     Ask when suits, the address, and who they'll meet. record_outcome "field_visit" with visit_address, contact_name, and attendees if they said.
-    Say "I'll pass your visit request to the team, who'll confirm the time." Never say the visit is booked or confirmed.
   - Renewal: if they're in contract and open to comparing before it renews, ask when it ends, then agree a time before then.
-    record_outcome "callback" with reason "renewal" and contract_end. If they still don't know when it ends, pass contract_end "unknown".
+    record_outcome "callback" with reason "renewal" and contract_end. If "What we know" gives the contract end, use that date rather than "unknown"; pass "unknown" only if nobody knows.
   - Email: if they'd rather get details by email, ask which services interest them, then their business email, and read it back.
-    record_outcome "email_request" with email and products. Say "a team member will email you." Never say you've sent anything.
+    record_outcome "email_request" with email and products.
   A "yes" or "sure" is not a time: ask when, and never write "now" or invent one.
   Team members work Monday to Friday: if they pick a Saturday or Sunday, ask if Monday at that time suits.
   Write callback_time as the time they said plus the exact day and date, worked out from today's date,
@@ -201,7 +203,7 @@ Before every reply, check:
 2. Under twenty words, unless it's the summary.
 3. Did they hint at a problem? Then ask about it. No plans or prices unless they asked.
 4. Asking a question? Then don't call record_outcome or end_call this turn.
-5. About to suggest a next step? Have you summarised and heard "yes, that's right" first?""",
+5. Discovery done and about to suggest a next step? Have you summarised and heard "yes, that's right" first?""",
             # the only goodbye: the model saying its own as well gave two, and no instructions gave none
             tools=[EndCallTool(extra_description="Call record_outcome before this.", end_instructions=GOODBYE)],
         )

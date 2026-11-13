@@ -562,7 +562,22 @@ async def test_agreed_callback_saves_its_reason_and_a_no_saves_none(call_rows):
 
 def test_prompt_covers_the_discovery_flow_and_never_claims_a_booking():
     instructions = SalesAgent(JOB_LEAD).instructions
-    for phrase in ("Have I got that right?",
-                   "who'll confirm the time", "a team member will email you", "transfer_to_specialist",
+    assert "who'll confirm" not in instructions and "will email you" not in instructions  # the goodbye says it, once
+    for phrase in ("Have I got that right?", "transfer_to_specialist", "Not when it's a bad time",
+                   "use that date rather than \"unknown\"",
                    "Would tomorrow or the next day suit?", "Morning or afternoon?"):
         assert phrase in instructions, phrase
+
+
+def test_goodbye_never_claims_a_visit_or_email_is_done():
+    # repeating "the agreed time" after a visit request sounded like a booked visit
+    for rule in ("the team will confirm the visit time", "a team member will email them",
+                 "Never say anything is booked, confirmed or sent"):
+        assert rule in agent_module.GOODBYE, rule
+
+
+@pytest.mark.parametrize("contract_end, saved", [("2037-10-01", False), ("2037-12-01", True)])
+@pytest.mark.asyncio
+async def test_renewal_guard_also_applies_to_an_interested_outcome(call_rows, contract_end, saved):
+    await SalesAgent(JOB_LEAD).record_outcome(None, **{**RENEWAL, "outcome": "interested"}, contract_end=contract_end)
+    assert bool(call_rows()) is saved
