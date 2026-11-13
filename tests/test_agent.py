@@ -352,9 +352,23 @@ async def test_callback_before_8am_means_the_afternoon(call_rows, given, saved_h
 def test_opening_discloses_the_ai_and_uses_only_the_first_name(monkeypatch):
     monkeypatch.setattr(agent_module, "BUSINESS_NAME", "Vodafone")
     assert agent_module.opening_line({"name": "Ciaran Walsh"}).startswith(
-        "Hi Ciaran, I'm an AI assistant calling on behalf of Vodafone."
+        "Hi Ciaran, I'm Ava, an AI assistant calling on behalf of Vodafone."
     )
-    assert agent_module.opening_line({"name": ""}).startswith("Hi, I'm an AI assistant")
+    assert agent_module.opening_line({"name": ""}).startswith("Hi, I'm Ava, an AI assistant")
+
+
+@pytest.mark.parametrize("agent_ref, name", [("ag-02", "Emily"), ("ag-01", "Ava"), (None, "Ava"), ("ag-04", "Ava")])
+def test_campaign_agent_picks_the_persona_and_voice(monkeypatch, agent_ref, name):
+    monkeypatch.setenv("ELEVEN_VOICE_ID", "ava-voice")
+    persona_name, voice = agent_module.persona({"agent_ref": agent_ref})
+    assert persona_name == name
+    assert voice == ("X8Kp4qn5wgd2ImoVCF3o" if name == "Emily" else "ava-voice")
+
+
+def test_emily_introduces_herself_and_the_prompt_uses_her_name():
+    lead = {**JOB_LEAD, "agent_ref": "ag-02"}
+    assert agent_module.opening_line(lead).split(", an AI assistant")[0].endswith("I'm Emily")
+    assert SalesAgent(lead).instructions.startswith("You are Emily,")
 
 
 def spoken(*lines: str) -> ChatContext:
@@ -474,7 +488,7 @@ def test_job_gets_time_to_save_and_analyse_after_hang_up():
 def test_opening_offers_a_free_connectivity_review(monkeypatch):
     monkeypatch.setattr(agent_module, "BUSINESS_NAME", "Vodafone")
     assert agent_module.opening_line({"name": "Ciaran Walsh"}) == (
-        "Hi Ciaran, I'm an AI assistant calling on behalf of Vodafone. "
+        "Hi Ciaran, I'm Ava, an AI assistant calling on behalf of Vodafone. "
         "We're offering local businesses a free connectivity review. Have you got a few minutes?"
     )
 

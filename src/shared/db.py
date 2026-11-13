@@ -150,7 +150,8 @@ def claim_leads(campaign_id: int, n: int, allowlist: set[str] | None, now: datet
                  for update skip locked)
                update leads l set status = 'dialling', dialled_at = %(now)s, attempts = l.attempts + 1
                from due where l.id = due.id
-               returning l.id as lead_id, l.campaign_id, l.attempts, """ + ", ".join(f"l.{f}" for f in LEAD_FIELDS),
+               returning l.id as lead_id, l.campaign_id, l.attempts,
+                         (select agent_ref from campaigns where id = l.campaign_id) as agent_ref, """ + ", ".join(f"l.{f}" for f in LEAD_FIELDS),
             params,
         ).fetchall()
 

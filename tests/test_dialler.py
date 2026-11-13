@@ -77,6 +77,13 @@ def test_claim_picks_only_due_allowed_unsuppressed_leads(test_db, campaign):
     assert statuses(test_db) == {"+1": "dialling", "+2": "retry", "+3": "dialling", "+4": "closed", "+5": "do_not_call", "+6": "new"}
 
 
+def test_claimed_lead_carries_the_campaign_agent(test_db, campaign):
+    campaign("+1")
+    with psycopg.connect(test_db, autocommit=True) as c:
+        c.execute("update campaigns set agent_ref = 'ag-02' where id = 1")
+    assert db.claim_leads(1, 1, allowlist=None, now=NOW)[0]["agent_ref"] == "ag-02"
+
+
 def test_claim_respects_n(test_db, campaign):
     for p in ("+1", "+2", "+3"):
         campaign(p)

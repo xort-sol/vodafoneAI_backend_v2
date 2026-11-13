@@ -92,10 +92,20 @@ def in_sales_hours(callback_at: str) -> str:
     return (moment + timedelta(hours=12)).isoformat() if moment.hour < 8 else callback_at
 
 
+EMILY_VOICE_ID = "X8Kp4qn5wgd2ImoVCF3o"
+
+
+def persona(lead: dict) -> tuple[str, str]:
+    """(name, ElevenLabs voice) for the campaign's agent; anything but Emily is Ava, the default voice."""
+    if lead.get("agent_ref") == "ag-02":
+        return "Emily", EMILY_VOICE_ID
+    return "Ava", os.getenv("ELEVEN_VOICE_ID") or elevenlabs.tts.DEFAULT_VOICE_ID
+
+
 def opening_line(lead: dict) -> str:
     first_name = (lead.get("name") or "").split()[:1]
     greeting = f"Hi {first_name[0]}" if first_name else "Hi"
-    return f"{greeting}, I'm an AI assistant calling on behalf of {BUSINESS_NAME}. We're offering local businesses a free connectivity review. Have you got a few minutes?"
+    return f"{greeting}, I'm {persona(lead)[0]}, an AI assistant calling on behalf of {BUSINESS_NAME}. We're offering local businesses a free connectivity review. Have you got a few minutes?"
 
 
 def has_disclosed(chat_ctx) -> bool:
@@ -141,7 +151,7 @@ class SalesAgent(Agent):
         self.reached = False  # True once a person or voicemail is on the line
         self.on_voicemail = False  # voicemail has its own message, not the opening
         super().__init__(
-            instructions=f"""You are Sam, a warm, relaxed sales rep for {BUSINESS_NAME}, talking to a customer on the phone.
+            instructions=f"""You are {persona(lead)[0]}, a warm, relaxed sales rep for {BUSINESS_NAME}, talking to a customer on the phone.
 You are an AI assistant and must say so in your first sentence.
 
 {now_line(now)}
@@ -405,13 +415,13 @@ def should_open_call(category: str, transcript: str) -> bool:
     return category == "uncertain" and not transcript
 
 
-def build_session(vad) -> AgentSession:
+def build_session(vad, voice_id: str | None = None) -> AgentSession:
     return AgentSession(
         vad=vad,  # adaptive interruption needs a VAD
         stt=inference.STT(model="deepgram/nova-3", language="en"),
         llm=inference.LLM(model=LLM_MODEL),
         tts=elevenlabs.TTS(
-            voice_id=os.getenv("ELEVEN_VOICE_ID") or elevenlabs.tts.DEFAULT_VOICE_ID,
+            voice_id=voice_id or os.getenv("ELEVEN_VOICE_ID") or elevenlabs.tts.DEFAULT_VOICE_ID,
             # expressive and as fast as flash in our test (0.17s to first audio).
             # Only stability applies: pacing comes from the text ("...", short sentences, CAPS for stress)
             model="eleven_v4_turbo",
@@ -459,7 +469,7 @@ async def sales_call(ctx: agents.JobContext):
 
     ctx.add_shutdown_callback(on_shutdown)
 
-    session = build_session(vad=ctx.proc.userdata["vad"])
+    session = build_session(vad=ctx.proc.userdata["vad"], voice_id=persona(lead)[1])
     silence = SilenceTracker()
 
     async def hang_up_on_silence():
