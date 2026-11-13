@@ -208,6 +208,21 @@ async def test_analysis_saves_discovery_scores_and_updates_the_lead(call_rows, t
     assert discovery["bb_spend"]["status"] == "declined" and discovery["mob_network"]["status"] == "unknown"
 
 
+@pytest.mark.parametrize("outcome", ["not_interested", "do_not_call", "hung_up"])
+@pytest.mark.asyncio
+async def test_an_opt_out_keeps_the_leads_score_but_the_analysis_keeps_the_total(call_rows, test_db, outcome):
+    with psycopg.connect(test_db) as c:
+        c.execute("truncate leads restart identity cascade")
+        lead_id = c.execute("insert into leads (phone, status, attempts, consent, score) values ('+353870000001', 'dialling', 1, true, 12) "
+                            "returning id").fetchone()[0]
+    db.save_call({"job_id": "j1", "lead_id": lead_id, "outcome": outcome})
+    await analyse_call("j1", LINES, outcome, ask=FakeLLM(json.dumps(GOOD)))
+    with psycopg.connect(test_db) as c:
+        assert c.execute("select score, sentiment, ai_summary from leads where id = %s", [lead_id]).fetchone() == (
+            12, "positive", GOOD["brief"])
+        assert c.execute("select score from analyses").fetchone() == (25,)  # no next step: 35 - 10
+
+
 @pytest.mark.parametrize("outcome", ["transferred", "field_visit", "email_request"])
 @pytest.mark.asyncio
 async def test_follow_up_outcomes_reach_the_inbox_even_when_analysis_fails(call_rows, test_db, outcome):

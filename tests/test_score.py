@@ -119,6 +119,11 @@ def test_different_broadband_and_mobile_providers_count_as_multiple_suppliers():
     assert points({"bb_provider": known("Eir")})["criteria"]["multiple_suppliers"] == 0
 
 
+@pytest.mark.parametrize("bb, mob", [("Eir", "eir Mobile"), ("Vodafone", "Vodafone Ireland"), (" Three ", "three")])
+def test_the_same_supplier_named_two_ways_is_one_supplier(bb, mob):
+    assert points({"bb_provider": known(bb), "mob_network": known(mob)})["criteria"]["multiple_suppliers"] == 0
+
+
 @pytest.mark.parametrize("outcome, pts", [("interested", 10), ("callback", 10), ("field_visit", 10), ("transferred", 10),
                                           ("email_request", 10), ("not_interested", 0), ("hung_up", 0), ("do_not_call", 0)])
 def test_next_step_follows_the_outcome(outcome, pts):

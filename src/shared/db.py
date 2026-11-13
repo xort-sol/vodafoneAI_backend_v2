@@ -8,6 +8,8 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
+from analysis.score import NEVER_WARM
+
 CALL_FIELDS = ["job_id", "room", "phone", "name", "company", "lead_id", "campaign_id", "outcome",
                "interested_services", "callback_time", "callback_at", "notes", "follow_up"]
 MAX_ATTEMPTS = 3
@@ -166,10 +168,10 @@ def finish_campaign_if_empty(campaign_id: int) -> None:
 def save_analysis(job_id: str, analysis: dict | None, model: str, hot: bool) -> None:
     """The analysis (if any) and, for a hot lead, one inbox task due at the customer's callback time. Saving again is a no-op."""
     with _connect() as conn:
-        call = conn.execute("select id, lead_id, callback_at from calls where job_id = %s", [job_id]).fetchone()
+        call = conn.execute("select id, lead_id, callback_at, outcome from calls where job_id = %s", [job_id]).fetchone()
         if call is None:
             return
-        call_id, lead_id, callback_at = call
+        call_id, lead_id, callback_at, outcome = call
         if analysis:
             conn.execute(
                 """insert into analyses (call_id, score, reason, objections, sentiment, next_step, brief, model, questions, unanswered,
@@ -179,9 +181,11 @@ def save_analysis(job_id: str, analysis: dict | None, model: str, hot: bool) -> 
                  analysis["next_step"], analysis["brief"], model, analysis["questions"], analysis["unanswered"],
                  Json(analysis["qualification"]), Json(analysis["discovery"]), analysis["classification"]],
             )
+            # an opt-out keeps the lead's old score: a hot total would put it back in front of the team
+            score = None if outcome in NEVER_WARM else analysis["score"]
             conn.execute(
-                "update leads set score = %s, sentiment = %s, ai_summary = %s where id = %s",
-                [analysis["score"], analysis["sentiment"], analysis["brief"], lead_id],
+                "update leads set score = coalesce(%s, score), sentiment = %s, ai_summary = %s where id = %s",
+                [score, analysis["sentiment"], analysis["brief"], lead_id],
             )
         if hot:
             conn.execute(

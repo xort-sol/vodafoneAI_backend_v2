@@ -41,6 +41,11 @@ def _ends_within_six_months(contract, today: date) -> bool:
     return False
 
 
+def _supplier(name: str) -> str:
+    """The first word, so "eir Mobile" is Eir and "Vodafone Ireland" is Vodafone."""
+    return (name.lower().split() or [""])[0]
+
+
 def classify(total: int, outcome: str) -> str:
     if outcome in NEVER_WARM or total < 40:
         return "low"
@@ -61,7 +66,7 @@ def score(discovery: dict, outcome: str, today: date | None = None) -> dict:
         "mobiles_5": (10, _at_least(_value(discovery, "mob_connections"), 5)),
         "mob_spend_150": (10, _at_least(_value(discovery, "mob_spend"), 150)),
         "m365_need": (5, yes("m365")),
-        "multiple_suppliers": (10, yes("other_suppliers") or bool(bb and mob and bb.strip().lower() != mob.strip().lower())),
+        "multiple_suppliers": (10, yes("other_suppliers") or bool(bb and mob and _supplier(bb) != _supplier(mob))),
         "considering_change": (10, yes("considering_change")),
         "next_step": (10, outcome in NEXT_STEP),
     }
