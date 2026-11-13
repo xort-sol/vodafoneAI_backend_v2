@@ -12,8 +12,10 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from livekit import agents, api
-from livekit.agents import AMD, Agent, AgentServer, AgentSession, JobProcess, RunContext, TurnHandlingOptions, function_tool, inference, llm
+from livekit.agents import (AMD, Agent, AgentServer, AgentSession, JobProcess, RunContext, ToolError, TurnHandlingOptions,
+                            function_tool, get_job_context, inference, llm)
 from livekit.agents.beta.tools import EndCallTool
+from livekit.agents.beta.workflows import WarmTransferTask
 from livekit.plugins import elevenlabs, silero
 
 from analysis import analyse
@@ -41,6 +43,15 @@ Outcome = Literal["interested", "callback", "not_interested", "do_not_call", "fi
 # calls.follow_up's reason for each outcome a person (or the dialler) follows up
 FOLLOW_UP_REASON = {"interested": "callback", "callback": "callback", "field_visit": "field_visit", "email_request": "email"}
 EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")  # basic shape only: a team member checks it before writing
+
+
+def specialist_phone(value: str) -> str:
+    """The number live transfers dial, if it's valid E.164; "" turns transfer off."""
+    return value if re.fullmatch(r"\+[1-9]\d{7,14}", value) else ""
+
+
+# Only ever from env, never from the model
+SALES_SPECIALIST_PHONE = specialist_phone(os.getenv("SALES_SPECIALIST_PHONE", ""))
 
 
 def who_line(lead: dict) -> str:
@@ -106,8 +117,12 @@ def now_line(now: datetime) -> str:
 
 
 class SalesAgent(Agent):
-    def __init__(self, lead: dict) -> None:
+    def __init__(self, lead: dict, phone_mode: bool = False) -> None:
         self.lead = lead
+        self.phone_mode = phone_mode
+        self.transferring = False  # set from dialling the specialist onwards: the AI must never speak over them
+        self.transfer_failed = False
+        can_transfer = bool(SALES_SPECIALIST_PHONE and phone_mode)
         self.recorded = False
         self.started_at = time.time()  # wall clock, to date each transcript line
         self.outcome = ""
@@ -166,7 +181,7 @@ How the call goes:
   Not when it's a bad time, they want an email straight away, or they're not interested: go straight to that.
   If they correct you, thank them and use the corrected facts.
 - Next step: pick the one that fits what you learned, suggest it, and go ahead only if they agree.
-  - They want to talk to someone now: if a transfer_to_specialist tool is available, offer to put them through. Otherwise offer a callback.
+  - They want to talk to someone now: {"offer to put them through to a sales specialist. Once they clearly agree to go now, call transfer_to_specialist." if can_transfer else "offer a callback with a team member."}
   - Callback with a team member: ask "Would tomorrow or the next day suit?", then "Morning or afternoon?", then confirm the exact day and time.
     record_outcome "interested".
   - Field visit: for several sites, connections or services, a more complex setup, or if they'd rather meet, offer a visit from a team member.
@@ -205,10 +220,12 @@ Before every reply, check:
 4. Asking a question? Then don't call record_outcome or end_call this turn.
 5. Discovery done and about to suggest a next step? Have you summarised and heard "yes, that's right" first?""",
             # the only goodbye: the model saying its own as well gave two, and no instructions gave none
-            tools=[EndCallTool(extra_description="Call record_outcome before this.", end_instructions=GOODBYE)],
+            tools=[EndCallTool(extra_description="Call record_outcome before this. Never use this to transfer.", end_instructions=GOODBYE)],
         )
 
     def llm_node(self, chat_ctx, tools, model_settings):
+        if self.transferring:
+            return ""  # on hold, or the specialist has the customer: say nothing
         # The law needs the disclosure first, so the opening comes from code: the model skipped it when the customer spoke first
         if not self.on_voicemail and not has_disclosed(chat_ctx):
             return opening_line(self.lead)
@@ -277,11 +294,38 @@ Before every reply, check:
                        "contract_end": contract_end, "visit_address": visit_address, "contact_name": contact_name,
                        "attendees": attendees, "email": email, "products": products}
             follow_up = {k: v for k, v in details.items() if v}
+        if self.transfer_failed:
+            follow_up = {**(follow_up or {}), "transfer": "failed"}
         await self.save(
             outcome, interested_services=interested_services, callback_time=callback_time, callback_at=callback_at,
             notes=notes, follow_up=follow_up,
         )
         return "Saved. Now call end_call."
+
+    @function_tool()
+    async def transfer_to_specialist(self, context: RunContext, brief: str) -> str:
+        """Put the customer through to a human sales specialist now. Only call this after the customer has clearly agreed to be transferred now.
+
+        Args:
+            brief: For the specialist: the business, current provider, what they pay, their main pain point and what they want.
+        """
+        if not (SALES_SPECIALIST_PHONE and self.phone_mode):
+            return "Transfer isn't available. Offer a callback with a team member instead."
+        self.transferring = True
+        try:
+            await WarmTransferTask(
+                SALES_SPECIALIST_PHONE, sip_trunk_id=os.getenv("SIP_OUTBOUND_TRUNK_ID"), chat_ctx=self.chat_ctx,
+                ringing_timeout=25, extra_instructions=brief,
+            )
+        except ToolError as e:  # no answer, declined, voicemail, hang-up or failed dial
+            logger.info("transfer failed: %s", e)
+            self.transferring = False
+            self.transfer_failed = True
+            return "The specialist isn't available. Apologise and offer a callback."
+        await self.save("transferred", notes=brief, follow_up={"transfer": "done"})
+        # LiveKit turns our audio back on after the hand-over; leaving the job ends the AI but not the call
+        get_job_context().shutdown(reason="transferred")
+        return ""
 
     async def save(self, outcome: str, **fields) -> None:
         if self.recorded:
@@ -379,7 +423,7 @@ async def sales_call(ctx: agents.JobContext):
     lead = {**lead, "room": ctx.room.name, "job_id": ctx.job.id}
     trunk_id = os.getenv("SIP_OUTBOUND_TRUNK_ID")
     phone_mode = bool(trunk_id and lead.get("phone"))
-    agent = SalesAgent(lead)
+    agent = SalesAgent(lead, phone_mode)
     agent.reached = not phone_mode  # a console or web tester is on the line from the start
 
     async def on_shutdown():
@@ -400,8 +444,8 @@ async def sales_call(ctx: agents.JobContext):
 
     @session.on("user_state_changed")
     def on_user_state(ev):
-        if phone_mode and not agent.reached:
-            return  # still ringing
+        if (phone_mode and not agent.reached) or agent.transferring:
+            return  # still ringing, or on hold for the specialist: silence must not hang up
         if ev.new_state == "speaking":
             silence.on_speaking()
         elif ev.new_state == "away":

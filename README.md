@@ -40,7 +40,7 @@ cp .env.example .env   # then fill it in
 | `DATABASE_URL` | Everything. Use Supabase's Session pooler string (the direct one is IPv6-only). |
 | `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `FRONTEND_ORIGIN` | API |
 | `DIAL_ALLOWLIST` | Dialler. Comma-separated numbers it may ring. Required; `demo.sh` refuses `*`. |
-| `ELEVEN_API_KEY`, `ELEVEN_VOICE_ID`, `BUSINESS_NAME`, `SIP_OUTBOUND_TRUNK_ID` | Agent (when run locally; the deployed agent uses LiveKit secrets) |
+| `ELEVEN_API_KEY`, `ELEVEN_VOICE_ID`, `BUSINESS_NAME`, `SIP_OUTBOUND_TRUNK_ID`, `SALES_SPECIALIST_PHONE` (optional, live transfer) | Agent (when run locally; the deployed agent uses LiveKit secrets) |
 
 ## Running a demo
 
@@ -59,6 +59,16 @@ cp .env.example .env   # then fill it in
    ```
 
 Talk to the agent without a phone line: `uv run python -m agent.main console`.
+
+### Live transfer to a sales specialist
+
+When a customer wants to talk to someone now, the agent can put them through to a human specialist on a real call.
+It plays hold music, rings `SALES_SPECIALIST_PHONE`, briefs the specialist on what it learned, then joins them to the customer and leaves the call.
+If the specialist doesn't answer or declines, the agent apologises and books a callback instead.
+
+- Locally: set `SALES_SPECIALIST_PHONE=+353...` in `.env` (E.164, through the same `SIP_OUTBOUND_TRUNK_ID`).
+- Deployed: `lk agent update-secrets --secrets SALES_SPECIALIST_PHONE=+353...` (restarts the agent; the code must be deployed first).
+- Not set, or not a valid E.164 number: transfer is off and the agent never offers it. It is also never offered without a phone line (console, web tester).
 
 ## Database changes
 

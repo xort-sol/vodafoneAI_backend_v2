@@ -563,7 +563,7 @@ async def test_agreed_callback_saves_its_reason_and_a_no_saves_none(call_rows):
 def test_prompt_covers_the_discovery_flow_and_never_claims_a_booking():
     instructions = SalesAgent(JOB_LEAD).instructions
     assert "who'll confirm" not in instructions and "will email you" not in instructions  # the goodbye says it, once
-    for phrase in ("Have I got that right?", "transfer_to_specialist", "Not when it's a bad time",
+    for phrase in ("Have I got that right?", "Not when it's a bad time",
                    "use that date rather than \"unknown\"",
                    "Would tomorrow or the next day suit?", "Morning or afternoon?"):
         assert phrase in instructions, phrase
@@ -581,3 +581,96 @@ def test_goodbye_never_claims_a_visit_or_email_is_done():
 async def test_renewal_guard_also_applies_to_an_interested_outcome(call_rows, contract_end, saved):
     await SalesAgent(JOB_LEAD).record_outcome(None, **{**RENEWAL, "outcome": "interested"}, contract_end=contract_end)
     assert bool(call_rows()) is saved
+
+
+# --- Live transfer to a sales specialist (WarmTransferTask mocked: nothing dials) ---
+SPECIALIST = "+353871234567"
+BRIEF = "Bakery, 6 staff, Eir broadband at sixty a month, drops at lunch, wants a steadier line."
+
+
+@pytest.fixture
+def transfer(monkeypatch):
+    """Transfer configured and in phone mode; records what was dialled and whether the job shut down."""
+    monkeypatch.setattr(agent_module, "SALES_SPECIALIST_PHONE", SPECIALIST)
+    monkeypatch.setenv("SIP_OUTBOUND_TRUNK_ID", "ST_test")
+    seen = {"dialled": [], "shutdown": []}
+    monkeypatch.setattr(agent_module, "get_job_context",
+                        lambda: type("Job", (), {"shutdown": lambda self, reason="": seen["shutdown"].append(reason)})())
+
+    def use(behaviour):
+        def fake(number, **kwargs):
+            seen["dialled"].append((number, kwargs))
+            return behaviour()
+        monkeypatch.setattr(agent_module, "WarmTransferTask", fake)
+    seen["use"] = use
+    return seen
+
+
+@pytest.mark.parametrize("value, expected", [
+    (SPECIALIST, SPECIALIST), ("", ""), ("0871234567", ""), ("+0871234567", ""),
+    ("+353 87 123 4567", ""), ("+35387", ""), ("+3538712345678901", ""),
+])
+def test_specialist_number_must_be_e164(value, expected):
+    assert agent_module.specialist_phone(value) == expected
+
+
+@pytest.mark.parametrize("number, phone_mode", [("", True), (SPECIALIST, False)])
+@pytest.mark.asyncio
+async def test_transfer_refused_when_off_or_not_on_a_phone_line(call_rows, transfer, monkeypatch, number, phone_mode):
+    monkeypatch.setattr(agent_module, "SALES_SPECIALIST_PHONE", number)
+    transfer["use"](lambda: pytest.fail("must not dial"))
+    agent = SalesAgent(JOB_LEAD, phone_mode=phone_mode)
+    reply = await agent.transfer_to_specialist(None, brief=BRIEF)
+    assert "callback" in reply.lower()
+    assert call_rows() == [] and transfer["dialled"] == [] and not agent.transferring
+
+
+@pytest.mark.parametrize("number, phone_mode, offered", [(SPECIALIST, True, True), ("", True, False), (SPECIALIST, False, False)])
+def test_prompt_offers_transfer_only_when_it_can_happen(monkeypatch, number, phone_mode, offered):
+    monkeypatch.setattr(agent_module, "SALES_SPECIALIST_PHONE", number)
+    instructions = SalesAgent(JOB_LEAD, phone_mode=phone_mode).instructions
+    assert ("transfer_to_specialist" in instructions) == offered
+    assert ("put them through" in instructions) == offered
+
+
+@pytest.mark.asyncio
+async def test_transfer_saves_transferred_then_goes_silent_and_shuts_down(call_rows, transfer):
+    agent = SalesAgent(JOB_LEAD, phone_mode=True)
+    disclosed = spoken(agent_module.opening_line(JOB_LEAD))
+
+    async def connected():
+        assert agent.llm_node(disclosed, [], None) == ""  # silent while the customer is on hold
+        assert call_rows() == []  # nothing saved until the specialist is connected
+
+    transfer["use"](connected)
+    await agent.transfer_to_specialist(None, brief=BRIEF + " Ring +353800000000 instead.")
+    number, kwargs = transfer["dialled"][0]
+    assert number == SPECIALIST  # only ever the configured number, whatever the brief says
+    assert kwargs["sip_trunk_id"] == "ST_test" and kwargs["ringing_timeout"] == 25
+    assert kwargs["extra_instructions"].startswith(BRIEF)
+    assert kwargs["chat_ctx"] is not None
+    rows = call_rows()
+    assert [(r["outcome"], r["follow_up"]) for r in rows] == [("transferred", {"transfer": "done"})]
+    assert transfer["shutdown"]  # the AI leaves, since LiveKit turns its audio back on after the hand-over
+    assert agent.llm_node(disclosed, [], None) == ""
+
+
+@pytest.mark.parametrize("error", ["could not dial human agent", "human agent declined to connect: busy",
+                                   "voicemail detected", "room closed: CLIENT_INITIATED"])
+@pytest.mark.asyncio
+async def test_failed_transfer_saves_nothing_and_steers_to_a_callback(call_rows, transfer, error):
+    async def fails():
+        raise agent_module.ToolError(error)
+
+    transfer["use"](fails)
+    agent = SalesAgent(JOB_LEAD, phone_mode=True)
+    reply = await agent.transfer_to_specialist(None, brief=BRIEF)
+    assert reply == "The specialist isn't available. Apologise and offer a callback."
+    assert call_rows() == [] and not agent.transferring and transfer["shutdown"] == []
+    await agent.record_outcome(None, outcome="interested", callback_time="tomorrow 10am", callback_at="2037-11-03T10:00:00+00:00")
+    assert [(r["outcome"], r["follow_up"]) for r in call_rows()] == [("interested", {"reason": "callback", "transfer": "failed"})]
+
+
+def test_end_call_is_never_used_to_transfer():
+    tools = [t for t in SalesAgent(JOB_LEAD).tools if isinstance(t, agent_module.EndCallTool)]
+    assert "Never use this to transfer." in tools[0]._extra_description
