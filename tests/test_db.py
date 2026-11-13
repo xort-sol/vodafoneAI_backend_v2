@@ -68,6 +68,10 @@ NOW = datetime(2026, 11, 2, 10, 0, tzinfo=timezone.utc)
         ("not_interested", 1, None, ("closed", None)),
         ("hung_up", 1, None, ("closed", None)),
         ("do_not_call", 1, None, ("do_not_call", None)),
+        # a person follows these up; the dialler never rings again
+        ("transferred", 1, None, ("interested", None)),
+        ("field_visit", 1, None, ("interested", None)),
+        ("email_request", 1, None, ("interested", None)),
     ],
 )
 def test_next_lead_state(outcome, attempts, callback_at, expected):

@@ -171,11 +171,12 @@ def save_analysis(job_id: str, analysis: dict | None, model: str, hot: bool) -> 
         call_id, lead_id, callback_at = call
         if analysis:
             conn.execute(
-                """insert into analyses (call_id, score, reason, objections, sentiment, next_step, brief, model, questions, unanswered, qualification)
-                   values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) on conflict (call_id) do nothing""",
+                """insert into analyses (call_id, score, reason, objections, sentiment, next_step, brief, model, questions, unanswered,
+                                        qualification, discovery, classification)
+                   values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) on conflict (call_id) do nothing""",
                 [call_id, analysis["score"], analysis["reason"], analysis["objections"], analysis["sentiment"],
-                 analysis["next_step"], analysis["brief"], model,
-                 analysis["questions"], analysis["unanswered"], Json(analysis["qualification"])],
+                 analysis["next_step"], analysis["brief"], model, analysis["questions"], analysis["unanswered"],
+                 Json(analysis["qualification"]), Json(analysis["discovery"]), analysis["classification"]],
             )
             conn.execute(
                 "update leads set score = %s, sentiment = %s, ai_summary = %s where id = %s",

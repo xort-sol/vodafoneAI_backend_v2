@@ -126,9 +126,8 @@ async def test_finished_call_has_outcome_and_transcript(call_rows, test_db):
 @pytest.mark.asyncio
 async def test_finished_call_is_timed_analysed_and_sent_to_the_inbox(call_rows, test_db, monkeypatch):
     async def fake_llm(prompt):
-        return json.dumps({"score": 82, "reason": "r", "objections": [], "sentiment": "positive",
-                           "next_step": "n", "brief": "b", "questions": [], "unanswered": [],
-                               "qualification": {"need": 0, "budget": 0, "timeline": 0, "authority": 0}})
+        return json.dumps({"discovery": {}, "reason": "r", "objections": [], "sentiment": "positive",
+                           "next_step": "n", "brief": "b", "questions": [], "unanswered": []})
 
     monkeypatch.setattr(analyse, "ask_llm", fake_llm)
     agent = SalesAgent({**TEST_LEAD, "job_id": "j1"})
@@ -138,7 +137,7 @@ async def test_finished_call_is_timed_analysed_and_sent_to_the_inbox(call_rows, 
     row = call_rows()[0]
     assert row["avg_latency_ms"] == 900 and row["duration_s"] is not None
     with psycopg.connect(test_db) as conn:
-        assert conn.execute("select score from analyses").fetchall() == [(82,)]
+        assert conn.execute("select score from analyses").fetchall() == [(10,)]  # nothing captured: only the agreed next step scores
         assert conn.execute("select count(*) from tasks").fetchone()[0] == 1
 
 @pytest.mark.asyncio

@@ -1,42 +1,122 @@
-"""Post-call analysis: score, reason, objections, sentiment, next step and a brief for the salesperson."""
+"""Post-call analysis: the discovery facts the customer gave, reason, objections, sentiment, next step and a brief for the salesperson.
+The score is not the model's: analysis.score works it out from the facts."""
 
 import asyncio
 import json
 import logging
+import math
 import re
+from datetime import date
 
 from livekit.agents import inference, llm
 
+from analysis.score import score
 from shared import db
 
 logger = logging.getLogger("sales-agent")
 MODEL = "openai/gpt-4.1"
 TIMEOUT_S = 30
-HOT_SCORE = 70
 MAX_BRIEF = 600
 SENTIMENTS = {"positive", "neutral", "negative"}
 UNREACHED = {"no_answer", "voicemail", "unreachable", "no_response"}
-QUALIFICATION_KEYS = ("need", "budget", "timeline", "authority")
+ALWAYS_HOT = {"interested", "transferred"}
 TAG = re.compile(r"\[[a-z ]+\]\s*")
+STATUSES = {"known", "unknown", "declined", "n/a"}
+YES_NO = ("decision_maker", "bb_issues", "bb_peak_issues", "m365", "voice", "considering_change", "other_suppliers", "mob_coverage")
+TEXT = ("business_type", "workforce", "other_decision_makers", "bb_provider", "bb_package", "bb_speed", "bb_needs",
+        "mob_network", "mob_data_roaming", "mob_handsets", "pain_point", "impact", "desired_improvement", "timeline")
+COUNTS = ("employees", "premises", "devices", "mob_connections")
+SPEND = ("bb_spend", "mob_spend")
+CONTRACT = ("bb_contract", "mob_contract")
+FACTS = YES_NO + TEXT + COUNTS + SPEND + CONTRACT
+UNKNOWN = {"status": "unknown", "value": None}
 
 
 def build_prompt(lines: list[tuple[str, str, int]], outcome: str) -> str:
     transcript = "\n".join(f"{'Agent' if who == 'agent' else 'Customer'}: {TAG.sub('', text)}" for who, text, _ in lines)
     return f"""You review a sales call an AI agent made to a small business. The recorded outcome is "{outcome}".
 Reply with JSON only, no other text, with exactly these keys:
-- "score": integer 0-100, how likely this customer is to buy if a salesperson follows up
-- "reason": one sentence on why that score
+- "discovery": object keyed by fact name, each fact {{"status": "known"|"unknown"|"declined"|"n/a", "value": ..., "source": "said"}}
+- "reason": one sentence on how likely this customer is to buy, and why
 - "objections": list of short phrases, the customer's objections (empty list if none)
 - "sentiment": "positive", "neutral" or "negative", how the customer felt by the end
 - "next_step": one sentence, what the salesperson should do next, with the time if one was agreed
 - "brief": two or three sentences the salesperson reads before calling: who, their situation, what they liked, what worries them
 - "questions": list of short phrases, what the customer asked (empty list if none)
 - "unanswered": list of short phrases, the questions the agent could not answer (empty list if none)
-- "qualification": object with integer keys "need", "budget", "timeline" and "authority", each 0-25: how clear their need is, whether they can afford it, how soon they would buy, and whether they decide
-Use only what the transcript says. Never invent prices, names or times.
+
+Discovery facts. Use only what the customer said: a fact is "known" only when the customer said it, with "source": "said".
+Anything not said is "unknown" (or leave it out), anything the customer refused to tell is "declined", and "n/a" when it does not apply.
+"value" is set only when "known", otherwise null. Never guess or infer a value.
+- Yes/no (true or false): "decision_maker", "bb_issues", "bb_peak_issues", "m365" (a Microsoft 365 need), "voice" (a phone system need), "considering_change", "other_suppliers" (uses more than one supplier), "mob_coverage" (has mobile coverage problems)
+- Short text: "business_type", "workforce" (office, remote, field), "other_decision_makers", "bb_provider", "bb_package" (business or residential), "bb_speed", "bb_needs" (cloud, video, remote), "mob_network", "mob_data_roaming", "mob_handsets", "pain_point", "impact", "desired_improvement", "timeline"
+- Counts: "employees", "premises", "devices", "mob_connections": {{"exact": n}} or {{"min": a, "max": b}} (max null for "50+")
+- Spend in euro per month: "bb_spend", "mob_spend": {{"exact": n}} or {{"min": a, "max": b}}, plus "vat": "incl" or "excl" only if they said
+- Contract end: "bb_contract", "mob_contract": {{"date": "YYYY-MM-DD"}} or {{"months": n}} from today ({date.today().isoformat()}), plus "type": "fixed" or "rolling" only if they said
+Never invent prices, names or times.
 
 Transcript:
 {transcript}"""
+
+
+def _number(n) -> bool:
+    # finite: json.loads accepts Infinity, which jsonb would refuse, losing the whole analysis
+    return isinstance(n, (int, float)) and not isinstance(n, bool) and math.isfinite(n) and n >= 0
+
+
+def _amount(v: dict, extra: dict) -> bool:
+    """{"exact": n} or {"min": a, "max": b or null}, plus only the optional keys in extra, each with an allowed value."""
+    keys = set(v) - set(extra)
+    if not all(v[k] in allowed for k, allowed in extra.items() if k in v):
+        return False
+    if keys == {"exact"}:
+        return _number(v["exact"])
+    return keys == {"min", "max"} and _number(v["min"]) and (v["max"] is None or _number(v["max"]) and v["max"] >= v["min"])
+
+
+def _contract(v: dict) -> bool:
+    keys = set(v) - {"type"}
+    if v.get("type", "fixed") not in ("fixed", "rolling"):
+        return False
+    if keys == {"months"}:
+        return isinstance(v["months"], int) and not isinstance(v["months"], bool) and v["months"] >= 0
+    if keys == {"date"} and isinstance(v["date"], str):
+        try:
+            date.fromisoformat(v["date"])
+            return True
+        except ValueError:
+            return False
+    return False
+
+
+def _valid_value(name: str, v) -> bool:
+    if name in YES_NO:
+        return isinstance(v, bool)
+    if name in TEXT:
+        return isinstance(v, str) and bool(v.strip())
+    if not isinstance(v, dict):
+        return False
+    if name in COUNTS:
+        return _amount(v, {}) and all(isinstance(n, int) for n in v.values() if n is not None)
+    if name in SPEND:
+        return _amount(v, {"vat": ("incl", "excl")})
+    return _contract(v)
+
+
+def parse_discovery(raw: dict) -> dict:
+    """Every fact, in the stored shape; a malformed or unsaid fact is unknown, so one bad fact never loses the call."""
+    facts = {}
+    for name in FACTS:
+        fact = raw.get(name)
+        if not isinstance(fact, dict) or fact.get("status") not in STATUSES:
+            facts[name] = UNKNOWN
+        elif fact["status"] != "known":
+            facts[name] = {"status": fact["status"], "value": None}
+        elif fact.get("source") == "said" and _valid_value(name, fact.get("value")):
+            facts[name] = {"status": "known", "value": fact["value"]}
+        else:
+            facts[name] = UNKNOWN
+    return facts
 
 
 def parse_analysis(text: str) -> dict | None:
@@ -48,38 +128,29 @@ def parse_analysis(text: str) -> dict | None:
         return None
     if not isinstance(data, dict):
         return None
-    score, objections = data.get("score"), data.get("objections")
+    lists = [data.get(k) for k in ("objections", "questions", "unanswered")]
     strings = [data.get(k) for k in ("reason", "next_step", "brief")]
-    questions, unanswered, qualification = data.get("questions"), data.get("unanswered"), data.get("qualification")
     if (
-        not all(isinstance(l, list) and all(isinstance(q, str) for q in l) for l in (questions, unanswered))
-        or not isinstance(qualification, dict) or set(qualification) != set(QUALIFICATION_KEYS)
-        or not all(isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 25 for v in qualification.values())
-        or not isinstance(score, int) or isinstance(score, bool) or not 0 <= score <= 100
+        not isinstance(data.get("discovery"), dict)
+        or not all(isinstance(l, list) and all(isinstance(q, str) for q in l) for l in lists)
         or data.get("sentiment") not in SENTIMENTS
-        or not isinstance(objections, list) or not all(isinstance(o, str) for o in objections)
         or not all(isinstance(s, str) and s.strip() for s in strings)
     ):
         return None
     return {
-        "score": score,
+        "discovery": parse_discovery(data["discovery"]),
         "reason": data["reason"],
-        "objections": objections,
+        "objections": data["objections"],
         "sentiment": data["sentiment"],
         "next_step": data["next_step"],
         "brief": data["brief"][:MAX_BRIEF],
-        "questions": questions,
-        "unanswered": unanswered,
-        "qualification": qualification,
+        "questions": data["questions"],
+        "unanswered": data["unanswered"],
     }
 
 
-def is_hot(outcome: str, score: int | None) -> bool:
-    if outcome == "interested":
-        return True
-    if outcome in ("not_interested", "do_not_call", "callback"):
-        return False
-    return score is not None and score >= HOT_SCORE
+def is_hot(outcome: str, classification: str | None) -> bool:
+    return outcome in ALWAYS_HOT or classification == "hot"
 
 
 def avg_latency_ms(items) -> int | None:
@@ -109,7 +180,7 @@ async def analyse_call(job_id: str, lines: list[tuple[str, str, int]], outcome: 
     """Analyse one saved call; a hot lead goes to the inbox even if the analysis fails, so it is never lost."""
     if outcome in UNREACHED or not any(who == "customer" for who, _, _ in lines):
         return  # nobody to analyse: unanswered, voicemail, or silence
-    if outcome == "interested":
+    if outcome in ALWAYS_HOT:
         # before the model call: LiveKit may end the job process while it runs
         await asyncio.to_thread(db.save_analysis, job_id, None, MODEL, True)
     analysis = None
@@ -118,7 +189,10 @@ async def analyse_call(job_id: str, lines: list[tuple[str, str, int]], outcome: 
         analysis = parse_analysis(reply)
         if analysis is None:
             logger.error("analysis for job %s did not match the schema: %.300s", job_id, reply)
+        else:
+            s = score(analysis["discovery"], outcome)
+            analysis |= {"qualification": s["criteria"], "score": s["total"], "classification": s["classification"]}
     except Exception as e:
         logger.error("analysis failed for job %s: %r", job_id, e)
-    hot = is_hot(outcome, analysis["score"] if analysis else None)
+    hot = is_hot(outcome, analysis["classification"] if analysis else None)
     await asyncio.to_thread(db.save_analysis, job_id, analysis, MODEL, hot)

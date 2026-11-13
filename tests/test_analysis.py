@@ -7,13 +7,20 @@ import pytest
 
 from dotenv import load_dotenv
 
-from analysis.analyse import analyse_call, avg_latency_ms, build_prompt, is_hot, parse_analysis
+from analysis.analyse import FACTS, analyse_call, avg_latency_ms, build_prompt, is_hot, parse_analysis
 from shared import db
 
 load_dotenv()  # LiveKit credentials for the real-model test; conftest still pins DATABASE_URL to the test database
 
+DISCOVERY = {
+    "employees": {"status": "known", "value": {"exact": 8}, "source": "said"},
+    "bb_issues": {"status": "known", "value": True, "source": "said"},
+    "decision_maker": {"status": "known", "value": True, "source": "said"},
+    "bb_spend": {"status": "declined", "value": None},
+}
+
 GOOD = {
-    "score": 82,
+    "discovery": DISCOVERY,
     "reason": "Asked about price and booked a call.",
     "objections": ["price"],
     "sentiment": "positive",
@@ -21,8 +28,8 @@ GOOD = {
     "brief": "Aoife, 8 staff, slow office internet; liked the 500 plan at forty euro; worried about price.",
     "questions": ["Is it 5G?"],
     "unanswered": [],
-    "qualification": {"need": 20, "budget": 15, "timeline": 10, "authority": 25},
 }
+
 
 LINES = [
     ("agent", "[warmly] Hi Aoife, I'm an AI assistant from Acme. Have you a quick minute?", 0),
@@ -40,42 +47,83 @@ def test_prompt_carries_the_transcript_and_outcome_without_delivery_tags():
     assert "[warmly]" not in prompt
 
 
+def test_prompt_asks_for_discovery_facts_from_the_customers_words_only():
+    prompt = build_prompt(LINES, "interested")
+    for name in ("decision_maker", "bb_spend", "mob_connections", "considering_change", "other_suppliers"):
+        assert f'"{name}"' in prompt
+    assert "only what the customer said" in prompt and '"declined"' in prompt and '"score"' not in prompt
+
+
 def test_parse_accepts_json_inside_chatter_or_a_code_fence():
-    assert parse_analysis(json.dumps(GOOD)) == GOOD
-    assert parse_analysis(f"Sure! Here it is:\n```json\n{json.dumps(GOOD)}\n```") == GOOD
+    parsed = parse_analysis(json.dumps(GOOD))
+    assert parse_analysis(f"Sure! Here it is:\n```json\n{json.dumps(GOOD)}\n```") == parsed
+    assert {k: parsed[k] for k in ("reason", "sentiment", "next_step", "questions")} == {
+        k: GOOD[k] for k in ("reason", "sentiment", "next_step", "questions")}
+
+
+def test_parse_keeps_said_and_declined_facts_and_marks_the_rest_unknown():
+    d = parse_analysis(json.dumps(GOOD))["discovery"]
+    assert set(d) == set(FACTS)
+    assert d["employees"] == {"status": "known", "value": {"exact": 8}}
+    assert d["bb_spend"] == {"status": "declined", "value": None}
+    assert d["mob_network"] == {"status": "unknown", "value": None}
+
+
+@pytest.mark.parametrize("name, fact", [
+    ("employees", {"status": "known", "value": 8, "source": "said"}),  # a count must be exact or a range
+    ("employees", {"status": "known", "value": {"min": 10, "max": 5}, "source": "said"}),
+    ("employees", {"status": "known", "value": {"exact": -1}, "source": "said"}),
+    ("employees", {"status": "known", "value": {"exact": True}, "source": "said"}),
+    ("decision_maker", {"status": "known", "value": "yes", "source": "said"}),
+    ("business_type", {"status": "known", "value": "  ", "source": "said"}),
+    ("bb_spend", {"status": "known", "value": {"exact": 60, "vat": "maybe"}, "source": "said"}),
+    ("bb_spend", {"status": "known", "value": {"exact": 60, "per": "year"}, "source": "said"}),
+    ("bb_contract", {"status": "known", "value": {"date": "next spring"}, "source": "said"}),
+    ("bb_contract", {"status": "known", "value": {"months": 4, "type": "monthly"}, "source": "said"}),
+    ("bb_contract", {"status": "known", "value": {}, "source": "said"}),
+    ("employees", {"status": "guessed", "value": None}),
+    ("employees", {"status": "known", "value": {"exact": 8}}),  # a guess: nobody said it
+    ("employees", {"status": "known", "value": {"exact": 8}, "source": "inferred"}),
+    ("employees", "eight"),
+    ("bb_spend", '{"status": "known", "value": {"exact": Infinity}, "source": "said"}'),
+])
+def test_parse_drops_a_malformed_or_unsaid_fact_but_keeps_the_analysis(name, fact):
+    if isinstance(fact, str) and fact.startswith("{"):
+        fact = json.loads(fact)  # Infinity: json.loads accepts it, jsonb does not
+    parsed = parse_analysis(json.dumps({**GOOD, "discovery": {**DISCOVERY, name: fact}}))
+    assert parsed["discovery"][name] == {"status": "unknown", "value": None}
+    assert parsed["discovery"]["bb_issues"] == {"status": "known", "value": True}
+
+
+@pytest.mark.parametrize("name, value", [
+    ("employees", {"min": 50, "max": None}), ("bb_spend", {"min": 50, "max": 75, "vat": "excl"}),
+    ("mob_spend", {"exact": 149.5}), ("bb_contract", {"date": "2027-03-01", "type": "fixed"}),
+    ("mob_contract", {"months": 4}), ("pain_point", "Drops during video calls"), ("m365", False),
+])
+def test_parse_keeps_every_valid_shape(name, value):
+    fact = {"status": "known", "value": value, "source": "said"}
+    assert parse_analysis(json.dumps({**GOOD, "discovery": {name: fact}}))["discovery"][name] == {"status": "known", "value": value}
+
+
+def test_parse_ignores_unknown_fact_names_and_clears_values_that_were_not_said():
+    parsed = parse_analysis(json.dumps({**GOOD, "discovery": {"shoe_size": {"status": "known", "value": 9, "source": "said"},
+                                                              "m365": {"status": "n/a", "value": True}}}))
+    assert "shoe_size" not in parsed["discovery"] and parsed["discovery"]["m365"] == {"status": "n/a", "value": None}
 
 
 @pytest.mark.parametrize(
     "bad",
     [
         "not json",
-        json.dumps({**GOOD, "score": 140}),
-        json.dumps({**GOOD, "score": "high"}),
         json.dumps({**GOOD, "sentiment": "ecstatic"}),
         json.dumps({**GOOD, "objections": "price"}),
+        json.dumps({**GOOD, "discovery": "lots"}),
         json.dumps({k: v for k, v in GOOD.items() if k != "brief"}),
+        json.dumps({k: v for k, v in GOOD.items() if k != "discovery"}),
     ],
 )
 def test_parse_rejects_anything_off_schema(bad):
     assert parse_analysis(bad) is None
-
-
-def test_parse_keeps_questions_and_qualification():
-    reply = json.dumps({**GOOD, "unanswered": ["Porting?"],
-                        "qualification": {"need": 20, "budget": 15, "timeline": 10, "authority": 25}})
-    parsed = parse_analysis(reply)
-    assert parsed["questions"] == ["Is it 5G?"] and parsed["unanswered"] == ["Porting?"]
-    assert parsed["qualification"]["authority"] == 25
-
-
-@pytest.mark.parametrize(
-    "qualification",
-    [{"need": 26, "budget": 0, "timeline": 0, "authority": 0}, {"need": -1, "budget": 0, "timeline": 0, "authority": 0},
-     {"need": 1.5, "budget": 0, "timeline": 0, "authority": 0}, {"need": True, "budget": 0, "timeline": 0, "authority": 0},
-     {"need": 5, "budget": 0, "timeline": 0}, "high"],
-)
-def test_parse_rejects_bad_qualification(qualification):
-    assert parse_analysis(json.dumps({**GOOD, "qualification": qualification})) is None
 
 
 def test_parse_trims_an_overlong_brief():
@@ -83,13 +131,13 @@ def test_parse_trims_an_overlong_brief():
 
 
 @pytest.mark.parametrize(
-    "outcome, score, hot",
-    [("interested", 10, True), ("interested", None, True), ("hung_up", 75, True), ("hung_up", 69, False),
-     ("hung_up", None, False), ("callback", 95, False), ("not_interested", 90, False), ("do_not_call", 100, False)],
+    "outcome, classification, hot",
+    [("interested", "low", True), ("interested", None, True), ("transferred", None, True),
+     ("hung_up", "hot", True), ("callback", "hot", True), ("field_visit", "hot", True), ("email_request", "warm", False),
+     ("hung_up", "warm", False), ("hung_up", None, False), ("not_interested", "low", False), ("do_not_call", "low", False)],
 )
-def test_hot_lead_rule(outcome, score, hot):
-    # a no or a do-not-call is never chased, whatever the model scored; a callback is re-dialled by the AI, not a person
-    assert is_hot(outcome, score) is hot
+def test_hot_lead_rule(outcome, classification, hot):
+    assert is_hot(outcome, classification) is hot
 
 
 def msg(role, **metrics):
@@ -135,22 +183,34 @@ async def test_hot_call_gets_an_analysis_and_one_inbox_task(call_rows, test_db):
     await analyse_call("j1", LINES, "interested", ask=FakeLLM(json.dumps(GOOD)))
     await analyse_call("j1", LINES, "interested", ask=FakeLLM(json.dumps(GOOD)))  # retried: no duplicate
     analyses, tasks = saved(test_db)
-    assert [(s, m) for s, _, m in analyses] == [(82, "openai/gpt-4.1")]
+    assert [(s, m) for s, _, m in analyses] == [(35, "openai/gpt-4.1")]  # decision maker, 5+ staff, issues, next step
     assert tasks == [("follow_up", True)]
 
 
 @pytest.mark.asyncio
-async def test_analysis_updates_the_lead_summary(call_rows, test_db):
+async def test_analysis_saves_discovery_scores_and_updates_the_lead(call_rows, test_db):
     with psycopg.connect(test_db) as c:
         c.execute("truncate leads restart identity cascade")
         lead_id = c.execute("insert into leads (phone, status, attempts, consent) values ('+353870000001', 'dialling', 1, true) returning id").fetchone()[0]
     db.save_call({"job_id": "j1", "lead_id": lead_id, "outcome": "interested"})
-    await analyse_call("j1", LINES, "interested", ask=FakeLLM(json.dumps({**GOOD, "score": 80})))
+    await analyse_call("j1", LINES, "interested", ask=FakeLLM(json.dumps(GOOD)))
     with psycopg.connect(test_db) as c:
         assert c.execute("select score, sentiment, ai_summary from leads where id = %s", [lead_id]).fetchone() == (
-            80, "positive", GOOD["brief"])
-        assert c.execute("select questions, qualification from analyses").fetchone() == (
-            ["Is it 5G?"], GOOD["qualification"])
+            35, "positive", GOOD["brief"])
+        questions, qualification, score, classification, discovery = c.execute(
+            "select questions, qualification, score, classification, discovery from analyses").fetchone()
+    assert questions == ["Is it 5G?"] and score == 35 and classification == "low"
+    assert qualification["decision_maker"] == 10 and qualification["bb_spend_50"] == 0 and len(qualification) == 11
+    assert discovery["employees"] == {"status": "known", "value": {"exact": 8}}
+    assert discovery["bb_spend"]["status"] == "declined" and discovery["mob_network"]["status"] == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_transferred_lead_reaches_the_inbox_even_when_analysis_fails(call_rows, test_db):
+    db.save_call({"job_id": "j1", "outcome": "transferred"})
+    await analyse_call("j1", LINES, "transferred", ask=FakeLLM("not json"))
+    analyses, tasks = saved(test_db)
+    assert analyses == [] and len(tasks) == 1
 
 
 @pytest.mark.asyncio
@@ -164,18 +224,19 @@ async def test_interested_lead_reaches_the_inbox_even_when_analysis_fails(call_r
 @pytest.mark.asyncio
 async def test_cold_call_is_analysed_but_not_sent_to_the_inbox(call_rows, test_db):
     db.save_call({"job_id": "j1", "outcome": "not_interested"})
-    await analyse_call("j1", LINES, "not_interested", ask=FakeLLM(json.dumps({**GOOD, "score": 20})))
+    await analyse_call("j1", LINES, "not_interested", ask=FakeLLM(json.dumps(GOOD)))
     analyses, tasks = saved(test_db)
     assert len(analyses) == 1 and tasks == []
 
 
 @pytest.mark.skipif(not os.getenv("LIVEKIT_API_KEY"), reason="needs LiveKit Cloud credentials for inference")
 @pytest.mark.asyncio
-async def test_real_model_scores_a_warm_call_high(call_rows, test_db):
+async def test_real_model_captures_what_the_customer_said(call_rows, test_db):
     db.save_call({"job_id": "j1", "outcome": "interested", "callback_time": "Thu 10am"})
     await analyse_call("j1", LINES, "interested")
-    (score, brief, _), = saved(test_db)[0]
-    assert score >= 60 and brief, (score, brief)
+    with psycopg.connect(test_db) as c:
+        discovery, brief = c.execute("select discovery, brief from analyses").fetchone()
+    assert discovery["employees"]["value"] == {"exact": 8} and brief, discovery
 
 
 class MustNotBeCalled:

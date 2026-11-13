@@ -223,3 +223,28 @@ def test_sellers_add_suppression_and_managers_remove_it(conn, as_user, users):
     as_user(conn, users["salesperson"])
     assert allowed(conn, "insert into suppression (phone, source) values ('+353870000003', 'manual')", [])
     assert conn.execute("delete from suppression where phone = '+353870000003'").rowcount == 0
+
+
+@pytest.mark.parametrize("outcome", ["transferred", "field_visit", "email_request"])
+def test_calls_accept_the_discovery_outcomes_and_a_follow_up(conn, outcome):
+    follow_up = '{"reason": "field_visit", "visit_address": "Main St, Cork", "transfer": "done"}'
+    conn.execute("insert into calls (job_id, outcome, follow_up) values (%s, %s, %s)", [outcome, outcome, follow_up])
+    assert conn.execute("select follow_up->>'reason' from calls").fetchone()[0] == "field_visit"
+
+
+def test_calls_still_refuse_an_unknown_outcome(conn):
+    with pytest.raises(psycopg.errors.CheckViolation):
+        conn.execute("insert into calls (job_id, outcome) values ('x', 'maybe')")
+
+
+def test_analyses_keep_discovery_and_one_of_four_classifications(conn):
+    call = conn.execute("insert into calls (job_id, outcome) values ('x', 'transferred') returning id").fetchone()[0]
+    conn.execute("insert into analyses (call_id, discovery, classification) values (%s, '{}', 'developing')", [call])
+    with pytest.raises(psycopg.errors.CheckViolation):
+        conn.execute("update analyses set classification = 'lukewarm'")
+
+
+def test_dashboard_counts_new_outcomes_as_reached(conn):
+    for outcome in ["transferred", "field_visit", "email_request", "no_answer"]:
+        conn.execute("insert into calls (job_id, outcome, created_at) values (%s, %s, '2026-11-03 10:00+00')", [outcome, outcome])
+    assert conn.execute("select dialled, reached from dashboard_daily").fetchone() == (4, 3)
