@@ -52,6 +52,7 @@ def specialist_phone(value: str) -> str:
 
 # Only ever from env, never from the model
 SALES_SPECIALIST_PHONE = specialist_phone(os.getenv("SALES_SPECIALIST_PHONE", ""))
+TRANSFER_TIMEOUT_S = 120  # ringing (25 s) plus briefing; past this the customer has waited on hold too long
 
 
 def who_line(lead: dict) -> str:
@@ -303,7 +304,7 @@ Before every reply, check:
         return "Saved. Now call end_call."
 
     @function_tool()
-    async def transfer_to_specialist(self, context: RunContext, brief: str) -> str:
+    async def transfer_to_specialist(self, context: RunContext, brief: str) -> str | None:
         """Put the customer through to a human sales specialist now. Only call this after the customer has clearly agreed to be transferred now.
 
         Args:
@@ -312,20 +313,33 @@ Before every reply, check:
         if not (SALES_SPECIALIST_PHONE and self.phone_mode):
             return "Transfer isn't available. Offer a callback with a team member instead."
         self.transferring = True
+        watchdog = None
         try:
-            await WarmTransferTask(
+            task = WarmTransferTask(
                 SALES_SPECIALIST_PHONE, sip_trunk_id=os.getenv("SIP_OUTBOUND_TRUNK_ID"), chat_ctx=self.chat_ctx,
-                ringing_timeout=25, extra_instructions=brief,
+                ringing_timeout=25, extra_instructions=f"{brief}\n{lead_facts(self.lead)}",
             )
-        except ToolError as e:  # no answer, declined, voicemail, hang-up or failed dial
-            logger.info("transfer failed: %s", e)
-            self.transferring = False
+            # The library never ends the task if the briefing model neither connects nor declines, or the merge fails:
+            # failing it this way also restores the customer's audio and stops the hold music.
+            # shortcut: _set_result is private LiveKit API, re-check on every livekit-agents upgrade; drop if it gains a timeout
+            watchdog = asyncio.get_running_loop().call_later(TRANSFER_TIMEOUT_S, task._set_result, ToolError("transfer timed out"))
+            await task
+        except Exception:  # ToolError for no answer, declined, voicemail, hang-up, timeout; anything else is a bug
+            logger.exception("transfer failed")
+            self.transferring = False  # otherwise the agent stays silent with no silence hang-up
             self.transfer_failed = True
             return "The specialist isn't available. Apologise and offer a callback."
+        finally:
+            if watchdog:
+                watchdog.cancel()
         await self.save("transferred", notes=brief, follow_up={"transfer": "done"})
         # LiveKit turns our audio back on after the hand-over; leaving the job ends the AI but not the call
         get_job_context().shutdown(reason="transferred")
-        return ""
+        return None  # no reply to generate
+
+    def silence_counts(self) -> bool:
+        """False while ringing, or on hold for the specialist (input is off, so the customer always looks silent)."""
+        return self.reached and not self.transferring
 
     async def save(self, outcome: str, **fields) -> None:
         if self.recorded:
@@ -444,8 +458,8 @@ async def sales_call(ctx: agents.JobContext):
 
     @session.on("user_state_changed")
     def on_user_state(ev):
-        if (phone_mode and not agent.reached) or agent.transferring:
-            return  # still ringing, or on hold for the specialist: silence must not hang up
+        if not agent.silence_counts():
+            return
         if ev.new_state == "speaking":
             silence.on_speaking()
         elif ev.new_state == "away":
