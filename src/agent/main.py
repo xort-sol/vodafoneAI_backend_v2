@@ -3,8 +3,9 @@ import contextlib
 import json
 import logging
 import os
+import re
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import AsyncIterable, Literal
 from zoneinfo import ZoneInfo
@@ -34,7 +35,10 @@ LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-4.1-mini")
 
 GOODBYE = "Say one short, friendly goodbye with no question. If a callback time was agreed, repeat it so they know what happens next."
 
-Outcome = Literal["interested", "callback", "not_interested", "do_not_call"]
+Outcome = Literal["interested", "callback", "not_interested", "do_not_call", "field_visit", "email_request"]
+# calls.follow_up's reason for each outcome a person (or the dialler) follows up
+FOLLOW_UP_REASON = {"interested": "callback", "callback": "callback", "field_visit": "field_visit", "email_request": "email"}
+EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")  # basic shape only: a team member checks it before writing
 
 
 def who_line(lead: dict) -> str:
@@ -77,7 +81,7 @@ def in_sales_hours(callback_at: str) -> str:
 def opening_line(lead: dict) -> str:
     first_name = (lead.get("name") or "").split()[:1]
     greeting = f"Hi {first_name[0]}" if first_name else "Hi"
-    return f"{greeting}, I'm an AI assistant calling on behalf of {BUSINESS_NAME}. Is now an okay time for a quick chat?"
+    return f"{greeting}, I'm an AI assistant calling on behalf of {BUSINESS_NAME}. We're offering local businesses a free connectivity review. Have you got a few minutes?"
 
 
 def has_disclosed(chat_ctx) -> bool:
@@ -114,15 +118,16 @@ You are an AI assistant and must say so in your first sentence.
 
 {now_line(datetime.now(IRELAND))}
 {who_line(lead)} {lead_facts(lead)}
-Use what we know to pick the right service and make the call relevant (a contract ending soon is a good moment to compare),
+Use what we know to skip questions it already answers (a contract ending soon is a good moment to compare),
 but don't read it back to them.
 
 How you talk:
 - Like a real person on a phone call: contractions, plain words, then let them talk.
 - Keep every turn under twenty words: one idea, one question. Callers can't scroll back, so long sentences get lost.
+  The one exception is the summary, which can run to about thirty-five words.
 - Exactly one question per turn, always at the end. Use small acknowledgements like "sure", "got it", "makes sense", but don't repeat their words back.
 - If they ask you something, answer it first, honestly: if the answer isn't in the services below, say a team member will confirm.
-- If they interrupt you, stop and respond to what they just said. Never restart your pitch from the top.
+- If they interrupt you, stop and respond to what they just said. Never restart from the top.
 - If they say "sorry?", "what?" or "pardon?", they didn't catch you: say your last point again in fewer, simpler words,
   with no new details, and ask the same question again.
 - Say numbers and prices the way people speak them ("forty euro a month"). No symbols, lists, abbreviations or markdown.
@@ -137,33 +142,50 @@ How you sound:
   Example: "Oh, that's REALLY frustrating. What happens when it drops?"
 
 How the call goes:
-- Open: your first line is spoken for you: it greets them, says you're an AI assistant calling on behalf of {BUSINESS_NAME}, and asks if now's okay. Don't repeat it.
-  Only a clear yes ("sure", "yes", "go ahead") counts as permission. A bare "hi" or "hello" is not: briefly ask again if now's okay.
+- Open: your first line is spoken for you: it greets them, says you're an AI assistant calling on behalf of {BUSINESS_NAME},
+  offers a free connectivity review and asks if they've got a few minutes. Don't repeat it.
+  Only a clear yes ("sure", "yes", "go ahead") counts as permission. A bare "hi" or "hello" is not: briefly ask again if they've got a few minutes.
+  If they ask what it's about, say it's a quick look at their broadband and mobiles to see if anything could work better, then ask again.
   If it's a bad time, ask when is better, record_outcome "callback", and wrap up.
-- Discover: ask an open question about how things are going in the area our services cover, then one follow-up that builds on their answer.
-  If they hint at a problem ("not really", "it's okay I guess", "could be better"), ask what's going on before you pitch anything.
-- Pitch: pick the one service that fits what they told you. Give the main benefit and the starting price in one short sentence,
-  then ask if they'd like to hear more. Share more details only if they ask. Don't open with "you mentioned".
-  Never ask them to choose between plans or speeds; a team member helps pick on the follow-up call.
-  If they ask about other plans, answer in one short sentence (for example, there are faster ones up to two gigabits),
-  then say a team member will help them pick.
-- Objections: acknowledge it in a few words, then give the matching answer from the objection answers below, in your own short words.
-  Don't repeat the pitch or the price.
-  Then ask if they'd like a team member to follow up or would rather leave it, and respect their answer. Never push twice.
-- Close: after the pitch and at most one round of details, stop selling: no more features, plans or discovery questions.
-  If they sound interested or give a soft reply like "okay", "sounds good" or "maybe", ask just "When would suit a team member
-  to give you a call about it?", with no extra "would you like" question in front. If they say they're not interested, respect that.
-  A "yes" or "sure" to a follow-up is not a time: ask when, and never write "now" or invent one.
-  If they stay vague, ask for a day and a rough time. Team members call Monday to Friday: if they pick a Saturday or Sunday,
-  ask if Monday at that time suits. Once they give a time, record_outcome "interested" with that callback_time.
+- Discover: you're here to understand their business, not to sell. Never start by selling or naming a plan.
+  Ask one natural question per turn that builds on their last answer. Never read out a list of questions.
+  Roughly in this order, skipping anything we already know:
+  their business (what they do, how many staff, how many sites, who decides on phones and internet),
+  then broadband (provider, what they pay, when the contract ends, any drop-outs or slow times),
+  then mobiles (how many, which network, what they pay, when the contract ends, coverage),
+  then what frustrates them most and what it costs the business.
+  Bring up Microsoft 365, business phone lines or landlines only when relevant: five or more staff, they use the cloud or Teams, or they mention it.
+  If an answer is vague and it matters, like what they pay, when the contract ends or who decides, ask one short follow-up.
+  Offer ranges only if they don't know the figure: for broadband "around fifty, seventy-five, or a hundred plus a month?",
+  for mobiles "around a hundred, two fifty, or five hundred plus a month?".
+  Aim for three to five minutes; take longer only if they're engaged and the opportunity is bigger.
+  If they ask a price, give it exactly as written in the services below, then carry on with your questions.
+- Summarise: before any next step, one turn that sums up the key facts, ending "Have I got that right?".
+  If they correct you, thank them and use the corrected facts.
+- Next step: pick the one that fits what you learned, suggest it, and go ahead only if they agree.
+  - They want to talk to someone now: if a transfer_to_specialist tool is available, offer to put them through. Otherwise offer a callback.
+  - Callback with a team member: ask "Would tomorrow or the next day suit?", then "Morning or afternoon?", then confirm the exact day and time.
+    record_outcome "interested".
+  - Field visit: for several sites, connections or services, a more complex setup, or if they'd rather meet, offer a visit from a team member.
+    Ask when suits, the address, and who they'll meet. record_outcome "field_visit" with visit_address, contact_name, and attendees if they said.
+    Say "I'll pass your visit request to the team, who'll confirm the time." Never say the visit is booked or confirmed.
+  - Renewal: if they're in contract and open to comparing before it renews, ask when it ends, then agree a time before then.
+    record_outcome "callback" with reason "renewal" and contract_end. If they still don't know when it ends, pass contract_end "unknown".
+  - Email: if they'd rather get details by email, ask which services interest them, then their business email, and read it back.
+    record_outcome "email_request" with email and products. Say "a team member will email you." Never say you've sent anything.
+  A "yes" or "sure" is not a time: ask when, and never write "now" or invent one.
+  Team members work Monday to Friday: if they pick a Saturday or Sunday, ask if Monday at that time suits.
   Write callback_time as the time they said plus the exact day and date, worked out from today's date,
   like "tomorrow at 10am (Saturday 31 October), by phone". Never guess a time they didn't give.
   Also pass callback_at: the same moment in ISO 8601 using the UTC offset given above.
-  If they're not, thank them warmly and record_outcome "not_interested". If they ask not to be called again, apologise and record_outcome "do_not_call".
+  If they're not interested, thank them warmly and record_outcome "not_interested". If they ask not to be called again, apologise and record_outcome "do_not_call".
+- Objections: acknowledge it in a few words, then give the matching answer from the objection answers below, in your own short words.
+  Never push twice.
 - Only record an outcome once the customer has clearly answered. Never call record_outcome or end_call in a turn where you ask a question;
   wait for their reply first. After record_outcome, call end_call straight away and say nothing yourself: ending the call says the goodbye.
 
-Rules: only use facts and prices from the services below. If you don't know something, say a team member will follow up with the details.
+Rules: only use facts and prices from the services below, and give prices only when asked. If you don't know something, say a team member will follow up with the details.
+Never promise savings, speeds or coverage. Never criticise another provider.
 Call record_outcome exactly once, before ending the call.
 
 Services:
@@ -173,13 +195,13 @@ Objection answers:
 {OBJECTIONS}
 
 Before every reply, check:
-0. Have they clearly said yes to talking now? If not (for example they only said "hi"), just ask if now's a good time,
-   saying exactly "Is now an okay time for a quick chat?". Add nothing else: no company, services or reason for the call.
+0. Have they clearly said yes to talking now? If not (for example they only said "hi"), just ask again,
+   saying exactly "Have you got a few minutes?". Add nothing else: no company, services or reason for the call.
 1. One question only, at the very end. No add-on second question like "Has it been slow or costly?".
-2. Under twenty words.
-3. Did they hint at a problem? Then ask about it; don't pitch yet.
+2. Under twenty words, unless it's the summary.
+3. Did they hint at a problem? Then ask about it. No plans or prices unless they asked.
 4. Asking a question? Then don't call record_outcome or end_call this turn.
-4b. Already pitched and they said "okay", "yes" or similar? Then close: ask when a team member could call them.""",
+5. About to suggest a next step? Have you summarised and heard "yes, that's right" first?""",
             # the only goodbye: the model saying its own as well gave two, and no instructions gave none
             tools=[EndCallTool(extra_description="Call record_outcome before this.", end_instructions=GOODBYE)],
         )
@@ -200,27 +222,66 @@ Before every reply, check:
         callback_time: str = "",
         callback_at: str = "",
         notes: str = "",
+        reason: Literal["callback", "renewal"] = "callback",
+        contract_end: str = "",
+        visit_address: str = "",
+        contact_name: str = "",
+        attendees: str = "",
+        email: str = "",
+        products: str = "",
     ) -> str:
         """Save the result of this call for the sales team.
 
         Args:
-            outcome: interested, callback, not_interested, or do_not_call.
+            outcome: interested (a team member calls them), callback (we ring back), not_interested, do_not_call,
+                field_visit (they asked for a visit), or email_request (they asked for details by email).
             interested_services: Services the customer showed interest in, comma separated.
-            callback_time: When and how the customer wants to be contacted, if they said.
+            callback_time: When and how the customer wants to be contacted, or when suits for the visit, if they said.
             callback_at: The callback_time moment in ISO 8601 with the Irish UTC offset, if they gave a time.
             notes: One-sentence summary of the conversation and any objections.
+            reason: renewal for a callback before their contract renews; otherwise callback.
+            contract_end: For a renewal: when their contract ends as YYYY-MM-DD, or "unknown" if they don't know.
+            visit_address: For a field visit: the address to visit.
+            contact_name: For a field visit: who to meet.
+            attendees: For a field visit: anyone else who'll be there, if they said.
+            email: For an email request: their business email address.
+            products: For an email request: the services they want details on.
         """
         callback_at = in_sales_hours(callback_at)
-        if outcome in ("interested", "callback") and not (callback_time and db.parse_time(callback_at, datetime.now(IRELAND))):
-            # The sales team can't act on a lead without a real time; make the agent ask instead of saving
-            return "Not saved. Ask when a team member should call, then call record_outcome again with callback_time and a future callback_at."
+        when = db.parse_time(callback_at, datetime.now(IRELAND)) if callback_time else None
+        # Each refusal tells the agent what to ask, instead of saving a follow-up the team can't act on
+        if outcome == "email_request":
+            if not EMAIL.fullmatch(email):
+                return "Not saved. Ask for their business email address and read it back, then call record_outcome again with email."
+            if not products:
+                return "Not saved. Ask which services they'd like details on, then call record_outcome again with products."
+        elif outcome in ("interested", "callback", "field_visit") and not when:
+            who = "suits for the visit" if outcome == "field_visit" else "a team member should call"
+            return f"Not saved. Ask when {who}, then call record_outcome again with callback_time and a future callback_at."
+        if outcome == "field_visit" and not (visit_address and contact_name):
+            return ("Not saved. Ask for the address to visit and the name of the person to meet, "
+                    "then call record_outcome again with visit_address and contact_name.")
+        if reason == "renewal" and outcome in ("interested", "callback"):
+            try:
+                ends = None if contract_end == "unknown" else date.fromisoformat(contract_end)
+            except ValueError:
+                return ('Not saved. Ask when their contract ends, then call record_outcome again with contract_end as YYYY-MM-DD, '
+                        'or "unknown" if they still don\'t know.')
+            if ends and when.date() >= ends:
+                return f"Not saved. The callback must be before their contract ends on {contract_end}: ask for a time before then."
+        follow_up = None
+        if outcome in FOLLOW_UP_REASON:
+            details = {"reason": reason if FOLLOW_UP_REASON[outcome] == "callback" else FOLLOW_UP_REASON[outcome],
+                       "contract_end": contract_end, "visit_address": visit_address, "contact_name": contact_name,
+                       "attendees": attendees, "email": email, "products": products}
+            follow_up = {k: v for k, v in details.items() if v}
         await self.save(
             outcome, interested_services=interested_services, callback_time=callback_time, callback_at=callback_at,
-            notes=notes,
+            notes=notes, follow_up=follow_up,
         )
         return "Saved. Now call end_call."
 
-    async def save(self, outcome: str, **fields: str) -> None:
+    async def save(self, outcome: str, **fields) -> None:
         if self.recorded:
             return
         self.recorded = True

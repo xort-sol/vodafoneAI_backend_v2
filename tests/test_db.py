@@ -27,6 +27,13 @@ def test_calls_are_keyed_by_job_not_room(call_rows):
     assert [r["outcome"] for r in call_rows()] == ["hung_up", "interested"]
 
 
+def test_follow_up_details_are_saved_with_the_call(call_rows):
+    follow_up = {"reason": "field_visit", "visit_address": "Main St, Cork", "contact_name": "Mary"}
+    db.save_call({"job_id": "j1", "outcome": "field_visit", "follow_up": follow_up})
+    db.save_call({"job_id": "j2", "outcome": "not_interested"})
+    assert [r["follow_up"] for r in call_rows()] == [follow_up, None]
+
+
 def test_do_not_call_goes_on_the_suppression_list(call_rows, test_db):
     db.save_call({"job_id": "j1", "phone": "+353870000000", "outcome": "do_not_call"})
     with psycopg.connect(test_db) as conn:

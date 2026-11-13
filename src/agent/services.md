@@ -38,3 +38,7 @@ Best for: pop-up sites, vans, backup internet, or places without fibre.
 - Every April, monthly prices rise by a small fixed amount (about two to three euro). If asked, say so honestly.
 - Businesses with more than twenty-five staff can get custom plans: offer a team member callback.
 - Anything else (custom quotes, discounts, porting, device prices, exact terms): a team member will follow up.
+
+## Microsoft 365, business voice and landlines
+We offer Microsoft 365, business phone systems (voice) and landlines too, but there are no prices or quotes for them here:
+a specialist covers them. If they're interested, say a specialist will go through it with them.

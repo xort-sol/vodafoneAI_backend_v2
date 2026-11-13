@@ -185,11 +185,10 @@ async def test_interested_lead_is_recorded(call_rows):
         AgentSession(llm=llm) as session,
     ):
         await session.start(SalesAgent(JOB_LEAD))
-        await session.run(user_input="Hi, yes I have a couple of minutes.")
-        await session.run(user_input="We have 8 staff and our office internet is really slow.")
-        result = await session.run(
-            user_input="That sounds great, I'm interested in the business internet. Have someone call me tomorrow at 10am."
-        )
+        await session.run(user_input="Hi, yes I have a few minutes.")
+        await session.run(user_input="We're a dental practice, 8 staff, I make the decisions. Our office internet is really slow.")
+        await session.run(user_input="Yes, that's right. I'd like a team member to call me about the internet.")
+        result = await session.run(user_input="Tomorrow at 10am suits.")
         result.expect.contains_function_call(name="record_outcome", arguments={"outcome": "interested"})
     row = call_rows()[0]
     assert row["outcome"] == "interested"
@@ -227,28 +226,28 @@ async def test_price_objection_is_acknowledged_without_pushing(call_rows):
         await session.start(SalesAgent(JOB_LEAD))
         await session.run(user_input="Sure, I have a minute.")
         await session.run(user_input="Our office internet keeps dropping.")
-        result = await session.run(user_input="Honestly that sounds too expensive for us.")
+        result = await session.run(user_input="Honestly Vodafone is too expensive for us.")
         await result.expect.next_event().is_message(role="assistant").judge(
             llm,
-            intent="Acknowledges the price concern and offers at most one short reframe, in one or two spoken sentences, "
-            "without listing several services or pressuring the customer.",
+            intent="Acknowledges the price concern in one or two spoken sentences and asks one question, such as what they pay now. "
+            "Promises no savings, lists no services and doesn't pressure the customer.",
         )
 
 
 @pytest.mark.skipif(not os.getenv("LIVEKIT_API_KEY"), reason="needs LiveKit Cloud credentials for inference")
 @pytest.mark.asyncio
-async def test_pitch_is_short_enough_to_follow_on_the_phone(call_rows):
+async def test_discovery_asks_before_selling(call_rows):
     async with (
         inference.LLM(model=agent_module.LLM_MODEL) as llm,
         AgentSession(llm=llm) as session,
     ):
         await session.start(SalesAgent(JOB_LEAD))
-        await session.run(user_input="Yeah, I have a minute.")
-        await session.run(user_input="It's fine, though our internet could be better.")
-        result = await session.run(user_input="Sure, tell me more.")
-        reply = result.expect.next_event().is_message(role="assistant").event().item.text_content
-        spoken = re.sub(r"\[[^\]]*\]", "", reply)  # delivery tags are voice directions, not words the caller hears
-        assert len(spoken.split()) <= 30, reply
+        await session.run(user_input="Yeah, I have a few minutes.")
+        result = await session.run(user_input="It's fine, though our internet could be better.")
+        event = result.expect.next_event().is_message(role="assistant")
+        spoken = re.sub(r"\[[^\]]*\]", "", event.event().item.text_content)  # delivery tags are voice directions
+        assert len(spoken.split()) <= 25, spoken
+        await event.judge(llm, intent="Asks one question about their internet. Names no plan, speed or price.")
 
 
 LIVE = pytest.mark.skipif(not os.getenv("LIVEKIT_API_KEY"), reason="needs LiveKit Cloud credentials for inference")
@@ -408,10 +407,10 @@ async def test_not_interested_needs_no_time(call_rows):
 
 @LIVE
 @pytest.mark.asyncio
-async def test_okay_after_pitch_leads_to_asking_for_callback_time(call_rows):
-    # The customer's lines from the 28 Oct console call where the lead was saved with no callback time
-    lines = ["Yeah. Sure. Go ahead.", "Yeah. That's going good, but not up to the mark here.",
-             "Maybe low speed. And sometime it it... It's not working.", "Yeah. Obviously.", "Yeah. Go ahead.", "Okay."]
+async def test_agreeing_to_a_call_leads_to_asking_when(call_rows):
+    # A "yes" to a follow-up is not a time: the 28 Oct console call saved a lead with no callback time
+    lines = ["Yeah. Sure. Go ahead.", "A café, four of us, I decide. Eir broadband, it drops most afternoons.",
+             "Yes, that's right.", "Yeah, a call would be good."]
     async with inference.LLM(model=agent_module.LLM_MODEL) as llm, AgentSession(llm=llm) as session:
         await session.start(SalesAgent(JOB_LEAD))
         await session.generate_reply(instructions="Open the call.")
@@ -419,7 +418,7 @@ async def test_okay_after_pitch_leads_to_asking_for_callback_time(call_rows):
             result = await session.run(user_input=line)
         assert all(r["callback_time"] for r in call_rows())
         await result.expect[-1].is_message(role="assistant").judge(
-            llm, intent="Asks when, or how, a team member should follow up with them. Does not say goodbye."
+            llm, intent="Asks when a team member should call, such as whether tomorrow or the next day suits. Does not say goodbye."
         )
 
 
@@ -469,3 +468,101 @@ async def test_voicemail_detector_uses_the_sessions_eu_speech_model():
 def test_job_gets_time_to_save_and_analyse_after_hang_up():
     # LiveKit's default is 10 s; hang-up can spend 30 s on the analysis
     assert agent_module.server._shutdown_process_timeout >= 60
+
+
+def test_opening_offers_a_free_connectivity_review(monkeypatch):
+    monkeypatch.setattr(agent_module, "BUSINESS_NAME", "Vodafone")
+    assert agent_module.opening_line({"name": "Ciaran Walsh"}) == (
+        "Hi Ciaran, I'm an AI assistant calling on behalf of Vodafone. "
+        "We're offering local businesses a free connectivity review. Have you got a few minutes?"
+    )
+
+
+FUTURE = "2037-11-03T10:00:00+00:00"
+VISIT = {"outcome": "field_visit", "callback_time": "Tuesday 3 November at 10am", "callback_at": FUTURE,
+         "visit_address": "Main Street, Cork", "contact_name": "Mary Byrne"}
+
+
+@pytest.mark.parametrize("missing, asks", [("visit_address", "address"), ("contact_name", "name"), ("callback_at", "when")])
+@pytest.mark.asyncio
+async def test_field_visit_needs_an_address_a_contact_and_a_future_time(call_rows, missing, asks):
+    reply = await SalesAgent(JOB_LEAD).record_outcome(None, **{**VISIT, missing: ""})
+    assert call_rows() == []
+    assert "Not saved" in reply and asks in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_field_visit_in_the_past_is_refused(call_rows):
+    reply = await SalesAgent(JOB_LEAD).record_outcome(None, **{**VISIT, "callback_at": "2020-01-01T10:00:00+00:00"})
+    assert call_rows() == [] and "Not saved" in reply
+
+
+@pytest.mark.asyncio
+async def test_field_visit_is_saved_as_a_request(call_rows):
+    reply = await SalesAgent(JOB_LEAD).record_outcome(None, **VISIT, attendees="Mary and her partner")
+    row = call_rows()[0]
+    assert row["outcome"] == "field_visit"
+    assert row["follow_up"] == {"reason": "field_visit", "visit_address": "Main Street, Cork",
+                                "contact_name": "Mary Byrne", "attendees": "Mary and her partner"}
+    assert "Saved" in reply
+
+
+@pytest.mark.parametrize("email", ["", "mary", "mary@byrne", "mary at byrne dot ie", "mary@@byrne.ie"])
+@pytest.mark.asyncio
+async def test_email_request_needs_a_valid_email(call_rows, email):
+    reply = await SalesAgent(JOB_LEAD).record_outcome(None, outcome="email_request", email=email, products="broadband")
+    assert call_rows() == []
+    assert "Not saved" in reply and "email" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_email_request_needs_the_products(call_rows):
+    reply = await SalesAgent(JOB_LEAD).record_outcome(None, outcome="email_request", email="mary@byrne.ie")
+    assert call_rows() == [] and "services" in reply.lower()
+    await SalesAgent(JOB_LEAD).record_outcome(None, outcome="email_request", email="mary@byrne.ie", products="broadband, mobiles")
+    row = call_rows()[0]
+    assert row["outcome"] == "email_request"
+    assert row["follow_up"] == {"reason": "email", "email": "mary@byrne.ie", "products": "broadband, mobiles"}
+
+
+RENEWAL = {"outcome": "callback", "reason": "renewal", "callback_time": "Tuesday 3 November at 10am", "callback_at": FUTURE}
+
+
+@pytest.mark.asyncio
+async def test_renewal_callback_after_the_contract_ends_is_refused(call_rows):
+    reply = await SalesAgent(JOB_LEAD).record_outcome(None, **RENEWAL, contract_end="2037-10-01")
+    assert call_rows() == []
+    assert "Not saved" in reply and "before" in reply
+
+
+@pytest.mark.parametrize("contract_end", ["2037-12-01", "unknown"])
+@pytest.mark.asyncio
+async def test_renewal_callback_before_the_end_or_with_an_unknown_end_is_saved(call_rows, contract_end):
+    await SalesAgent(JOB_LEAD).record_outcome(None, **RENEWAL, contract_end=contract_end)
+    row = call_rows()[0]
+    assert row["outcome"] == "callback"
+    assert row["follow_up"] == {"reason": "renewal", "contract_end": contract_end}
+
+
+@pytest.mark.parametrize("contract_end", ["", "March 2037"])
+@pytest.mark.asyncio
+async def test_renewal_callback_asks_for_a_readable_contract_end(call_rows, contract_end):
+    reply = await SalesAgent(JOB_LEAD).record_outcome(None, **RENEWAL, contract_end=contract_end)
+    assert call_rows() == []
+    assert "contract" in reply and "unknown" in reply
+
+
+@pytest.mark.asyncio
+async def test_agreed_callback_saves_its_reason_and_a_no_saves_none(call_rows):
+    await SalesAgent({**JOB_LEAD, "job_id": "j1"}).record_outcome(
+        None, outcome="interested", callback_time="Tuesday 3 November at 10am", callback_at=FUTURE)
+    await SalesAgent({**JOB_LEAD, "job_id": "j2"}).record_outcome(None, outcome="not_interested")
+    assert [r["follow_up"] for r in call_rows()] == [{"reason": "callback"}, None]
+
+
+def test_prompt_covers_the_discovery_flow_and_never_claims_a_booking():
+    instructions = SalesAgent(JOB_LEAD).instructions
+    for phrase in ("Have I got that right?",
+                   "who'll confirm the time", "a team member will email you", "transfer_to_specialist",
+                   "Would tomorrow or the next day suit?", "Morning or afternoon?"):
+        assert phrase in instructions, phrase

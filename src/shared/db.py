@@ -9,7 +9,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
 CALL_FIELDS = ["job_id", "room", "phone", "name", "company", "lead_id", "campaign_id", "outcome",
-               "interested_services", "callback_time", "callback_at", "notes"]
+               "interested_services", "callback_time", "callback_at", "notes", "follow_up"]
 MAX_ATTEMPTS = 3
 RETRY_AFTER = timedelta(hours=4)
 UNREACHED = {"no_answer", "voicemail", "no_response", "unreachable"}
@@ -52,7 +52,8 @@ def save_call(row: dict) -> None:
     """One row per LiveKit job; saving the same job again is ignored. A do-not-call also goes on the suppression list.
     A dialler call also moves its lead to the next status, in the same transaction."""
     now = datetime.now(timezone.utc)
-    row = {**row, "callback_at": parse_time(row.get("callback_at"), now)}
+    row = {**row, "callback_at": parse_time(row.get("callback_at"), now),
+           "follow_up": Json(row["follow_up"]) if row.get("follow_up") else None}
     columns = ", ".join(CALL_FIELDS)
     with _connect() as conn:
         inserted = conn.execute(
