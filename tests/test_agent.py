@@ -580,7 +580,7 @@ def test_prompt_covers_the_discovery_flow_and_never_claims_a_booking():
     assert "who'll confirm" not in instructions and "will email you" not in instructions  # the goodbye says it, once
     for phrase in ("Have I got that right?", "Not when it's a bad time",
                    "use that date rather than \"unknown\"",
-                   "Would tomorrow or the next working day suit?", "Morning or afternoon?"):
+                   ):
         assert phrase in instructions, phrase
 
 
@@ -725,7 +725,7 @@ async def test_failed_transfer_saves_nothing_and_steers_to_a_callback(call_rows,
     transfer["use"](fails)
     agent = SalesAgent(JOB_LEAD, phone_mode=True)
     reply = await agent.transfer_to_specialist(None, brief=BRIEF)
-    assert reply == "The specialist isn't available. Apologise and offer a callback."
+    assert reply == agent_module.TRANSFER_FAILED
     assert call_rows() == [] and not agent.transferring and transfer["shutdown"] == []
     await agent.record_outcome(None, outcome="interested", callback_time="tomorrow 10am", callback_at="2037-11-03T10:00:00+00:00")
     assert [(r["outcome"], r["follow_up"]) for r in call_rows()] == [("interested", {"reason": "callback", "transfer": "failed"})]
@@ -737,7 +737,7 @@ def test_end_call_is_never_used_to_transfer():
 
 
 async def _assert_failed_transfer_falls_back(agent, reply, call_rows, transfer):
-    assert reply == "The specialist isn't available. Apologise and offer a callback."
+    assert reply == agent_module.TRANSFER_FAILED
     assert call_rows() == [] and not agent.transferring and agent.transfer_failed and transfer["shutdown"] == []
 
 
@@ -810,9 +810,73 @@ async def test_a_failed_transfer_is_never_tried_again(call_rows, transfer):
     agent = SalesAgent(JOB_LEAD, phone_mode=True)
     await agent.transfer_to_specialist(None, brief=BRIEF)
     reply = await agent.transfer_to_specialist(None, brief=BRIEF)
-    assert reply == "The specialist isn't available. Offer a callback."
+    assert reply == agent_module.TRANSFER_FAILED
     assert len(transfer["dialled"]) == 1 and not agent.transferring
 
 
 def test_watchdog_allows_for_a_long_briefing():
     assert agent_module.TRANSFER_TIMEOUT_S == 180
+
+
+# --- Task E: weekend guard, confirm only after saving, transfer reasons ---
+SATURDAY_5PM = "2037-11-07T17:00:00+00:00"
+
+
+@pytest.mark.parametrize("outcome", ["interested", "callback", "field_visit"])
+@pytest.mark.asyncio
+async def test_weekend_follow_up_is_refused_and_asks_about_monday(call_rows, outcome):
+    reply = await SalesAgent(JOB_LEAD).record_outcome(None, **{**VISIT, "outcome": outcome, "callback_at": SATURDAY_5PM})
+    assert call_rows() == []
+    assert "Not saved" in reply and "Monday at that time" in reply
+
+
+@pytest.mark.asyncio
+async def test_weekend_is_judged_on_the_irish_date():
+    # 23:30 UTC on a Friday in Irish winter time is still Friday
+    assert "Monday" not in await SalesAgent(JOB_LEAD).record_outcome(
+        None, outcome="callback", callback_time="Fri", callback_at="2037-11-06T23:30:00+00:00")
+
+
+@pytest.mark.asyncio
+async def test_failed_save_is_not_confirmed_and_can_be_retried(call_rows, monkeypatch):
+    def down(row):
+        raise psycopg.OperationalError("database down")
+
+    save_call = agent_module.db.save_call
+    monkeypatch.setattr(agent_module.db, "save_call", down)
+    agent = SalesAgent(JOB_LEAD)
+    reply = await agent.record_outcome(None, outcome="interested", callback_time="Tue 10am", callback_at=FUTURE)
+    assert reply == ("Not saved: the booking didn't go through. Tell them it isn't confirmed yet, "
+                     "and offer to try again or have the team call them.")
+    assert not agent.recorded
+    monkeypatch.setattr(agent_module.db, "save_call", save_call)  # back up: the retry saves
+    assert (await agent.record_outcome(None, outcome="interested", callback_time="Tue 10am", callback_at=FUTURE)).startswith("Saved")
+    assert [r["outcome"] for r in call_rows()] == ["interested"]
+
+
+@pytest.mark.parametrize("now, reason", [
+    (datetime(2037, 11, 7, 11, 0, tzinfo=agent_module.IRELAND), "our specialists take calls Monday to Friday, nine to half five"),
+    (WORKING_HOURS, "I can't put you through on this call"),
+])
+@pytest.mark.asyncio
+async def test_without_transfer_the_prompt_and_tool_give_the_reason_and_a_callback(monkeypatch, call_rows, now, reason):
+    monkeypatch.setattr(agent_module, "SALES_SPECIALIST_PHONE", "")
+    monkeypatch.setattr(agent_module, "ireland_now", lambda: now)
+    agent = SalesAgent(JOB_LEAD)
+    assert reason in agent.instructions and "callback" in agent.instructions
+    reply = await agent.transfer_to_specialist(None, brief=BRIEF)
+    assert reason in reply and "callback" in reply
+
+
+def test_with_transfer_the_prompt_says_what_to_say_if_it_fails(transfer):
+    assert "the specialist couldn't take the call just now" in SalesAgent(JOB_LEAD, phone_mode=True).instructions
+
+
+def test_prompt_covers_the_real_call_review():
+    instructions = SalesAgent(JOB_LEAD).instructions
+    for phrase in ("What day and time would suit you best?", "don't ask morning or afternoon", "Confirm the full date and time",
+                   "so the team can compare like for like", "Eir Eir, e-i-r", "Never reword it twice",
+                   "provider and rough monthly spend", "include handsets", "which year", "separate",
+                   "names what you don't know yet", "about forty-five words", "isn't considering a change"):
+        assert phrase in instructions, phrase
+    assert "Would tomorrow or the next working day suit?" not in instructions and "Morning or afternoon?" not in instructions

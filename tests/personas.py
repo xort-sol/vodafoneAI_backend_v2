@@ -67,6 +67,16 @@ PERSONAS = [
      "intent": "Honestly says monthly prices rise every April by a small fixed amount."},
     {"id": "off-topic", "lines": ["Sure.", "Can you help me with my electricity bill?"],
      "intent": "Politely says it can't help with that and steers back to broadband or mobiles."},
+    # From call 22 (Orla, a physio on three sites): no transfer possible here (no phone line), and options she turned down
+    {"id": "orla-wants-transfer-now",
+     "lines": ["Yes.", "We're a physio, five people, three locations, and it's me who decides.",
+               "Broadband's slow at one of the sites. Mobiles are with Eir, five of them.", "It's on January twenty fifth.",
+               "Can you put me through to someone now?"],
+     "intent": "Says in plain words why it can't put them through right now and offers a callback with a team member. "
+               "Doesn't mention settings or configuration, and doesn't say goodbye."},
+    {"id": "rejects-callback-options", "lines": DISCOVERED + ["Yeah, sure, a call is fine.", "No.", "No, neither.", "Monday at 5pm."],
+     "intent": "Confirms a call on Monday at five pm, or says a team member will ring then. "
+               "Doesn't ask whether morning or afternoon suits."},
     # Lead context
     {"id": "known-facts-skipped", "lead": {"name": "Tom Walsh", "company": "Walsh Dental", "staff": "12",
                                            "current_plan": "Eir fibre 300"},

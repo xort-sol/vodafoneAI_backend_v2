@@ -48,6 +48,10 @@ def test_transcript_is_stored_in_order(call_rows, test_db):
     assert lines == [("agent", "[warmly] Hi, I'm an AI assistant.", 3), ("customer", "Hello?", 7)]
 
 
+def test_record_result_reports_a_save(call_rows):
+    assert record_result({"job_id": "j1", "outcome": "interested"}) is True
+
+
 def test_transcript_without_a_call_is_skipped(call_rows):
     db.save_transcript("no-such-job", [("agent", "Hi", 0)])  # must not raise
 
@@ -55,7 +59,7 @@ def test_transcript_without_a_call_is_skipped(call_rows):
 def test_lead_is_logged_when_the_database_is_down(call_rows, monkeypatch, caplog):
     monkeypatch.setenv("DATABASE_URL", "postgresql://nobody@127.0.0.1:1/none")
     with caplog.at_level(logging.ERROR):
-        record_result({"job_id": "j1", "phone": "+1", "outcome": "interested", "callback_time": "Fri 10am"})
+        assert record_result({"job_id": "j1", "phone": "+1", "outcome": "interested", "callback_time": "Fri 10am"}) is False
     assert "could not save call to database" in caplog.text
     assert "Fri 10am" in caplog.text  # full row in the log, so the lead can be recovered
 

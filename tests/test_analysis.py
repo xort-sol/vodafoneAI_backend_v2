@@ -1,5 +1,8 @@
 import json
 import os
+import re
+from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 import psycopg
@@ -55,6 +58,38 @@ def test_prompt_asks_for_discovery_facts_from_the_customers_words_only():
     assert "only what the customer said" in prompt and '"declined"' in prompt and '"score"' not in prompt
 
 
+def test_prompt_has_todays_irish_date_and_the_real_call_rules():
+    prompt = build_prompt(LINES, "interested")
+    today = datetime.now(db.IRELAND).date()
+    assert f"Today is {today:%A} {today.isoformat()} in Ireland" in prompt
+    for phrase in ('{"month": m, "day": d}', "only when they stated or confirmed the year",
+                   '"five hundred plus" is {"min": 500, "max": null}', '"exact" only for a figure they gave',
+                   '"five people" is employees {"exact": 5}', "questions the customer asked, not the agent",
+                   "agreeing to a callback is not enough"):
+        assert phrase in prompt, phrase
+
+
+def load_transcript(path) -> list[tuple[str, str, int]]:
+    """The saved real-call transcript: '  52s cust: text' lines, as (agent or customer, text, seconds)."""
+    lines = []
+    for raw in Path(path).read_text().splitlines():
+        m = re.match(r"\s*(\d+)s (agen|cust): (.*)", raw)
+        if m:
+            lines.append(({"agen": "agent", "cust": "customer"}[m[2]], m[3], int(m[1])))
+    return lines
+
+
+# a real customer's call: kept out of git (.superpowers/sdd is ignored), so these tests skip on a clean checkout
+ORLA = Path(__file__).resolve().parents[1] / ".superpowers" / "sdd" / "discovery" / "orla-transcript.txt"
+NEEDS_ORLA = pytest.mark.skipif(not ORLA.exists(), reason="needs the call 22 transcript")
+
+
+@NEEDS_ORLA
+def test_orla_transcript_loads():
+    lines = load_transcript(ORLA)
+    assert lines[0] == ("customer", "No.", 8) and ("customer", "Five", 138) in lines
+
+
 def test_parse_accepts_json_inside_chatter_or_a_code_fence():
     parsed = parse_analysis(json.dumps(GOOD))
     assert parse_analysis(f"Sure! Here it is:\n```json\n{json.dumps(GOOD)}\n```") == parsed
@@ -82,6 +117,11 @@ def test_parse_keeps_said_and_declined_facts_and_marks_the_rest_unknown():
     ("bb_contract", {"status": "known", "value": {"date": "next spring"}, "source": "said"}),
     ("bb_contract", {"status": "known", "value": {"months": 4, "type": "monthly"}, "source": "said"}),
     ("bb_contract", {"status": "known", "value": {}, "source": "said"}),
+    ("bb_contract", {"status": "known", "value": {"month": 13, "day": 1}, "source": "said"}),
+    ("bb_contract", {"status": "known", "value": {"month": 2, "day": 30}, "source": "said"}),
+    ("bb_contract", {"status": "known", "value": {"month": 1, "day": True}, "source": "said"}),
+    ("bb_contract", {"status": "known", "value": {"month": 1}, "source": "said"}),
+    ("bb_contract", {"status": "known", "value": {"month": 1, "day": 25, "year": 2027}, "source": "said"}),
     ("employees", {"status": "guessed", "value": None}),
     ("employees", {"status": "known", "value": {"exact": 8}}),  # a guess: nobody said it
     ("employees", {"status": "known", "value": {"exact": 8}, "source": "inferred"}),
@@ -99,7 +139,8 @@ def test_parse_drops_a_malformed_or_unsaid_fact_but_keeps_the_analysis(name, fac
 @pytest.mark.parametrize("name, value", [
     ("employees", {"min": 50, "max": None}), ("bb_spend", {"min": 50, "max": 75, "vat": "excl"}),
     ("mob_spend", {"exact": 149.5}), ("bb_contract", {"date": "2027-03-01", "type": "fixed"}),
-    ("mob_contract", {"months": 4}), ("pain_point", "Drops during video calls"), ("m365", False),
+    ("mob_contract", {"months": 4}), ("mob_contract", {"month": 1, "day": 25}),
+    ("bb_contract", {"month": 2, "day": 29, "type": "fixed"}), ("pain_point", "Drops during video calls"), ("m365", False),
 ])
 def test_parse_keeps_every_valid_shape(name, value):
     fact = {"status": "known", "value": value, "source": "said"}
@@ -300,3 +341,23 @@ async def test_interested_lead_is_in_the_inbox_before_the_model_answers(call_row
     await analyse_call("j1", LINES, "interested", ask=check_task_first)
     analyses, tasks = saved(test_db)
     assert len(analyses) == 1 and len(tasks) == 1
+
+
+@NEEDS_ORLA
+@pytest.mark.skipif(not os.getenv("LIVEKIT_API_KEY"), reason="needs LiveKit Cloud credentials for inference")
+@pytest.mark.asyncio
+async def test_real_model_scores_the_orla_call(call_rows, test_db):
+    # call 22, 13 Nov 2026: a five-person physio on three sites; mobile spend "five hundred plus"; contract "January 25th" with no year
+    db.save_call({"job_id": "orla", "outcome": "interested", "callback_time": "Saturday at 5pm"})
+    await analyse_call("orla", load_transcript(ORLA), "interested")
+    with psycopg.connect(test_db) as c:
+        d, questions, score, classification = c.execute("select discovery, questions, score, classification from analyses").fetchone()
+    value = lambda name: d[name]["value"] if d[name]["status"] == "known" else None
+    assert value("employees") == {"exact": 5} and value("premises") == {"exact": 3}, d
+    assert value("decision_maker") is True and value("bb_issues") is True and value("m365") is False, d
+    assert value("mob_network").lower().startswith("eir") and value("mob_connections") == {"exact": 5}, d
+    assert value("mob_spend") == {"min": 500, "max": None}, d
+    assert value("bb_provider") is None and value("bb_spend") is None, d
+    assert all(value(c) is None or "date" not in value(c) for c in ("bb_contract", "mob_contract")), d
+    assert value("considering_change") is not True and questions == [], (d, questions)
+    assert (score, classification) == (55, "developing"), d

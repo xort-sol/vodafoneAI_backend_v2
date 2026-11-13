@@ -6,7 +6,7 @@ import json
 import logging
 import math
 import re
-from datetime import date
+from datetime import date, datetime
 
 from livekit.agents import inference, llm
 
@@ -34,7 +34,9 @@ UNKNOWN = {"status": "unknown", "value": None}
 
 def build_prompt(lines: list[tuple[str, str, int]], outcome: str) -> str:
     transcript = "\n".join(f"{'Agent' if who == 'agent' else 'Customer'}: {TAG.sub('', text)}" for who, text, _ in lines)
+    today = datetime.now(db.IRELAND).date()
     return f"""You review a sales call an AI agent made to a small business. The recorded outcome is "{outcome}".
+Today is {today:%A} {today.isoformat()} in Ireland.
 Reply with JSON only, no other text, with exactly these keys:
 - "discovery": object keyed by fact name, each fact {{"status": "known"|"unknown"|"declined"|"n/a", "value": ..., "source": "said"}}
 - "reason": one sentence on how likely this customer is to buy, and why
@@ -42,17 +44,20 @@ Reply with JSON only, no other text, with exactly these keys:
 - "sentiment": "positive", "neutral" or "negative", how the customer felt by the end
 - "next_step": one sentence, what the salesperson should do next, with the time if one was agreed
 - "brief": two or three sentences the salesperson reads before calling: who, their situation, what they liked, what worries them
-- "questions": list of short phrases, what the customer asked (empty list if none)
-- "unanswered": list of short phrases, the questions the agent could not answer (empty list if none)
+- "questions": list of short phrases, questions the customer asked, not the agent (empty list if none)
+- "unanswered": list of short phrases, the customer's questions the agent could not answer (empty list if none)
 
 Discovery facts. Use only what the customer said: a fact is "known" only when the customer said it, with "source": "said".
 Anything not said is "unknown" (or leave it out), anything the customer refused to tell is "declined", and "n/a" when it does not apply.
-"value" is set only when "known", otherwise null. Never guess or infer a value.
-- Yes/no (true or false): "decision_maker", "bb_issues", "bb_peak_issues", "m365" (a Microsoft 365 need), "voice" (a phone system need), "considering_change", "other_suppliers" (uses more than one supplier), "mob_coverage" (has mobile coverage problems)
+"value" is set only when "known", otherwise null. Never guess or infer a value, but record every fact the customer states:
+"five people" is employees {{"exact": 5}}, "three locations" is premises {{"exact": 3}}.
+- Yes/no (true or false): "decision_maker", "bb_issues", "bb_peak_issues", "m365" (a Microsoft 365 need), "voice" (a phone system need), "considering_change" (only if they say they're thinking of switching or reviewing: agreeing to a callback is not enough), "other_suppliers" (uses more than one supplier), "mob_coverage" (has mobile coverage problems)
 - Short text: "business_type", "workforce" (office, remote, field), "other_decision_makers", "bb_provider", "bb_package" (business or residential), "bb_speed", "bb_needs" (cloud, video, remote), "mob_network", "mob_data_roaming", "mob_handsets", "pain_point", "impact", "desired_improvement", "timeline"
 - Counts: "employees", "premises", "devices", "mob_connections": {{"exact": n}} or {{"min": a, "max": b}} (max null for "50+")
-- Spend in euro per month: "bb_spend", "mob_spend": {{"exact": n}} or {{"min": a, "max": b}}, plus "vat": "incl" or "excl" only if they said
-- Contract end: "bb_contract", "mob_contract": {{"date": "YYYY-MM-DD"}} or {{"months": n}} from today ({date.today().isoformat()}), plus "type": "fixed" or "rolling" only if they said
+- Spend in euro per month: "bb_spend", "mob_spend": {{"exact": n}} or {{"min": a, "max": b}}, plus "vat": "incl" or "excl" only if they said.
+  "exact" only for a figure they gave; a range or "around" is an estimate: "five hundred plus" is {{"min": 500, "max": null}}
+- Contract end: "bb_contract", "mob_contract": {{"months": n}} from today, {{"date": "YYYY-MM-DD"}} only when they stated or confirmed the year,
+  or {{"month": m, "day": d}} for a day and month with no confirmed year; plus "type": "fixed" or "rolling" only if they said
 Never invent prices, names or times.
 
 Transcript:
@@ -80,12 +85,15 @@ def _contract(v: dict) -> bool:
         return False
     if keys == {"months"}:
         return isinstance(v["months"], int) and not isinstance(v["months"], bool) and v["months"] >= 0
-    if keys == {"date"} and isinstance(v["date"], str):
-        try:
+    try:
+        if keys == {"date"} and isinstance(v["date"], str):
             date.fromisoformat(v["date"])
             return True
-        except ValueError:
-            return False
+        if keys == {"month", "day"} and all(type(v[k]) is int for k in keys):
+            date(2024, v["month"], v["day"])  # no year: a leap year, so 29 February is a real day
+            return True
+    except ValueError:
+        return False
     return False
 
 
