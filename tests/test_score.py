@@ -84,7 +84,8 @@ def test_mobile_spend_threshold(value, pts):
 
 @pytest.mark.parametrize("value, pts", [({"months": 6}, 10), ({"months": 7}, 0), ({"months": 0}, 10),
                                         ({"date": "2027-05-13"}, 10), ({"date": "2027-05-14"}, 0),
-                                        ({"date": "2027-01-01", "type": "fixed"}, 10)])
+                                        ({"date": "2027-01-01", "type": "fixed"}, 10),
+                                        ({"date": "2026-01-01"}, 10)])  # already ended: out of contract now
 def test_broadband_contract_within_six_months(value, pts):
     assert points({"bb_contract": known(value)})["criteria"]["bb_contract_6m"] == pts
 

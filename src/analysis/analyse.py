@@ -19,7 +19,7 @@ TIMEOUT_S = 30
 MAX_BRIEF = 600
 SENTIMENTS = {"positive", "neutral", "negative"}
 UNREACHED = {"no_answer", "voicemail", "unreachable", "no_response"}
-ALWAYS_HOT = {"interested", "transferred"}
+ALWAYS_HOT = {"interested", "transferred", "field_visit", "email_request"}  # a person follows these up
 TAG = re.compile(r"\[[a-z ]+\]\s*")
 STATUSES = {"known", "unknown", "declined", "n/a"}
 YES_NO = ("decision_maker", "bb_issues", "bb_peak_issues", "m365", "voice", "considering_change", "other_suppliers", "mob_coverage")
@@ -150,7 +150,8 @@ def parse_analysis(text: str) -> dict | None:
 
 
 def is_hot(outcome: str, classification: str | None) -> bool:
-    return outcome in ALWAYS_HOT or classification == "hot"
+    # a callback is re-dialled by the AI, not a person
+    return outcome in ALWAYS_HOT or (outcome != "callback" and classification == "hot")
 
 
 def avg_latency_ms(items) -> int | None:
@@ -186,12 +187,13 @@ async def analyse_call(job_id: str, lines: list[tuple[str, str, int]], outcome: 
     analysis = None
     try:
         reply = await asyncio.wait_for((ask or ask_llm)(build_prompt(lines, outcome)), TIMEOUT_S)
-        analysis = parse_analysis(reply)
-        if analysis is None:
+        parsed = parse_analysis(reply)
+        if parsed is None:
             logger.error("analysis for job %s did not match the schema: %.300s", job_id, reply)
         else:
-            s = score(analysis["discovery"], outcome)
-            analysis |= {"qualification": s["criteria"], "score": s["total"], "classification": s["classification"]}
+            s = score(parsed["discovery"], outcome)
+            # set only once scored, so a scoring error can't break the save below
+            analysis = parsed | {"qualification": s["criteria"], "score": s["total"], "classification": s["classification"]}
     except Exception as e:
         logger.error("analysis failed for job %s: %r", job_id, e)
     hot = is_hot(outcome, analysis["classification"] if analysis else None)

@@ -7,6 +7,7 @@ import pytest
 
 from dotenv import load_dotenv
 
+from analysis import analyse
 from analysis.analyse import FACTS, analyse_call, avg_latency_ms, build_prompt, is_hot, parse_analysis
 from shared import db
 
@@ -133,10 +134,12 @@ def test_parse_trims_an_overlong_brief():
 @pytest.mark.parametrize(
     "outcome, classification, hot",
     [("interested", "low", True), ("interested", None, True), ("transferred", None, True),
-     ("hung_up", "hot", True), ("callback", "hot", True), ("field_visit", "hot", True), ("email_request", "warm", False),
-     ("hung_up", "warm", False), ("hung_up", None, False), ("not_interested", "low", False), ("do_not_call", "low", False)],
+     ("field_visit", None, True), ("email_request", "low", True), ("hung_up", "hot", True),
+     ("callback", "hot", False), ("hung_up", "warm", False), ("hung_up", None, False),
+     ("not_interested", "low", False), ("do_not_call", "low", False)],
 )
 def test_hot_lead_rule(outcome, classification, hot):
+    # a person follows up an agreed next step; a callback is re-dialled by the AI, so it is never hot
     assert is_hot(outcome, classification) is hot
 
 
@@ -205,10 +208,23 @@ async def test_analysis_saves_discovery_scores_and_updates_the_lead(call_rows, t
     assert discovery["bb_spend"]["status"] == "declined" and discovery["mob_network"]["status"] == "unknown"
 
 
+@pytest.mark.parametrize("outcome", ["transferred", "field_visit", "email_request"])
 @pytest.mark.asyncio
-async def test_transferred_lead_reaches_the_inbox_even_when_analysis_fails(call_rows, test_db):
-    db.save_call({"job_id": "j1", "outcome": "transferred"})
-    await analyse_call("j1", LINES, "transferred", ask=FakeLLM("not json"))
+async def test_follow_up_outcomes_reach_the_inbox_even_when_analysis_fails(call_rows, test_db, outcome):
+    db.save_call({"job_id": "j1", "outcome": outcome})
+    await analyse_call("j1", LINES, outcome, ask=FakeLLM("not json"))
+    analyses, tasks = saved(test_db)
+    assert analyses == [] and len(tasks) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_scoring_error_still_saves_the_hot_lead(call_rows, test_db, monkeypatch):
+    def broken(*args):
+        raise ValueError("bad fact")
+
+    monkeypatch.setattr(analyse, "score", broken)
+    db.save_call({"job_id": "j1", "outcome": "interested"})
+    await analyse_call("j1", LINES, "interested", ask=FakeLLM(json.dumps(GOOD)))
     analyses, tasks = saved(test_db)
     assert analyses == [] and len(tasks) == 1
 
