@@ -1,0 +1,58 @@
+   8s cust: No.
+  15s cust: Hello?
+  15s agen: Hi Orla, I'm Emily, an AI assistant calling on behalf of Vodafone. We're offering local businesses a free connectivity review. Have you got a few minutes?
+  27s cust: Yes.
+  29s agen: Great, thanks! Tell me a bit about Kennedy Physio—what kind of work do you do and how many staff do you have?
+  40s cust: Sorry?
+  41s agen: Sure! What does Kennedy Physio do, and how many people work there?
+  52s cust: Actually, we are working as a concession company, and we have five people
+  52s agen: Got it. Do you operate from just one site, or multiple locations?
+  61s cust: Exterior three locations.
+  62s agen: Thanks. Who usually decides on your phones and internet services for those sites?
+  71s cust: Sorry?
+  71s agen: Who chooses your phones and internet services for the three locations?
+  79s cust: Excuse Excuse me.
+  80s agen: No problem! Is it you, a manager, or someone else who decides on phones and internet services?
+  88s cust: It's me.
+  90s agen: Thanks for that. How is your current broadband provider working for your three locations?
+  99s cust: It's pretty much good.
+  99s agen: Got it. When does your current broadband contract end?
+ 108s cust: It's on January twenty fifth.
+ 109s agen: That’s soon enough for a quick check. Do you ever get slow or dropped internet at any location?
+ 118s cust: Yeah. Uh, in park.
+ 119s agen: That sounds frustrating. What impact does slow internet in the park have on your business?
+ 131s cust: Obviously, use of clients and all that.
+ 132s agen: That makes sense. How many mobile phones do your staff use during work?
+ 138s cust: Five
+ 139s agen: And which network do your mobiles use now?
+ 145s cust: It's
+ 146s agen: Sorry, I missed that.
+ 151s cust: it's Eir Eir, e I r, Eir.
+ 151s agen: Got it. Roughly, what do you pay monthly for mobiles—around a hundred, two fifty, or five hundred plus?
+ 163s cust: So it's around five hundred plus
+ 163s agen: Thanks. When do your mobile contracts with Eir end?
+ 172s cust: It's ending on twenty fifth.
+ 173s agen: Thanks for that. What
+ 175s cust: Of January.
+ 175s agen: Thanks. What frustrates you most about your current mobiles or broadband service?
+ 187s cust: So, obviously, as I tell you earlier, it's going to
+ 187s agen: Sorry, I didn’t catch that last part. What frustrates you most about your mobiles or broadband?
+ 197s cust: Flowing bread.
+ 197s agen: Got it, slow broadband is frustrating. Do you also use Microsoft 365 or Teams for your business?
+ 207s cust: Nope.
+ 209s agen: Thanks, that's clear. To sum up: you have five staff across three locations, your broadband contract ends January twenty-fifth, with some slow internet issues. Mobiles with Eir, also ending same day, costing around five hundred plus. Have I got that right?
+ 229s cust: Yes.
+ 229s agen: Great! Since your contracts end soon, would a Vodafone team member call you for a quick comparison before then?
+ 238s cust: Yeah. Sure.
+ 239s agen: Would tomorrow or the next working day suit you better for that call?
+ 245s cust: No.
+ 246s agen: Would morning or afternoon be better when we call?
+ 252s cust: It's no.
+ 253s agen: No worries, when would you like a team member to call you for that comparison?
+ 260s cust: Tomorrow.
+ 262s agen: Morning or afternoon tomorrow?
+ 266s cust: After
+ 267s agen: Okay, I’ll set it for tomorrow afternoon. What time suits you exactly?
+ 276s cust: Five PM.
+ 278s agen: Thanks, Orla! Someone will ring you tomorrow at five in the afternoon for that chat. Take care!
+ 285s cust: Yeah.

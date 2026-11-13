@@ -146,8 +146,8 @@ class SalesAgent(Agent):
         now = ireland_now()
         self.can_transfer = can_transfer = bool(SALES_SPECIALIST_PHONE and phone_mode and in_working_hours(now))
         # said to the customer when they ask to be put through and can't be: never the configuration
-        self.no_transfer = ("our specialists take calls Monday to Friday, nine to half five" if not in_working_hours(now)
-                            else "I can't put you through on this call")
+        self.no_transfer = ("our specialists have finished for today, they take calls Monday to Friday, nine to half five" if not in_working_hours(now)
+                            else "I can't connect calls from this line")
         self.recorded = False
         self.started_at = time.time()  # wall clock, to date each transcript line
         self.outcome = ""
@@ -170,7 +170,7 @@ How you talk:
 - Exactly one question per turn, always at the end. Use small acknowledgements like "sure", "got it", "makes sense", but don't repeat their words back.
 - If they ask you something, answer it first, honestly: if the answer isn't in the services below, say a team member will confirm.
 - If they interrupt you, stop and respond to what they just said. Never restart from the top.
-- If they say "sorry?" or "what?", ask the same question once in fewer, simpler words. Still unclear? Never reword it twice or guess:
+- If they say "sorry?", "what?" or "excuse me?", or their answer is unclear, say your last point once in fewer, simpler words. Still unclear? Never reword it twice or guess:
   use context ("Eir Eir, e-i-r" is Eir), or say why you ask ("so the team can compare like for like").
 - Say numbers and prices the way people speak them ("forty euro a month"). No symbols, lists, abbreviations or markdown.
 
@@ -222,7 +222,7 @@ How the call goes:
   A "yes" or "sure" is not a time: ask when, and never write "now" or invent one.
   Team members work Monday to Friday: if they pick a Saturday or Sunday, ask if Monday at that time suits.
   Write callback_time as the time they said plus the exact day and date, worked out from today's date,
-  like "tomorrow at 10am (Saturday 31 October), by phone". Never guess a time they didn't give.
+  like "Monday at 5pm (Monday 16 November), by phone". Never guess a time they didn't give.
   Also pass callback_at: the same moment in ISO 8601 using the UTC offset given above.
   If they're not interested, thank them warmly and record_outcome "not_interested". If they ask not to be called again, apologise and record_outcome "do_not_call".
 - Objections: acknowledge it in a few words, then give the matching answer from the objection answers below, in your own short words.

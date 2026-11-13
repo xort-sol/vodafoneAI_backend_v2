@@ -579,8 +579,7 @@ def test_prompt_covers_the_discovery_flow_and_never_claims_a_booking():
     instructions = SalesAgent(JOB_LEAD).instructions
     assert "who'll confirm" not in instructions and "will email you" not in instructions  # the goodbye says it, once
     for phrase in ("Have I got that right?", "Not when it's a bad time",
-                   "use that date rather than \"unknown\"",
-                   ):
+                   "use that date rather than \"unknown\""):
         assert phrase in instructions, phrase
 
 
@@ -855,8 +854,8 @@ async def test_failed_save_is_not_confirmed_and_can_be_retried(call_rows, monkey
 
 
 @pytest.mark.parametrize("now, reason", [
-    (datetime(2037, 11, 7, 11, 0, tzinfo=agent_module.IRELAND), "our specialists take calls Monday to Friday, nine to half five"),
-    (WORKING_HOURS, "I can't put you through on this call"),
+    (datetime(2037, 11, 7, 11, 0, tzinfo=agent_module.IRELAND), "our specialists have finished for today, they take calls Monday to Friday, nine to half five"),
+    (WORKING_HOURS, "I can't connect calls from this line"),
 ])
 @pytest.mark.asyncio
 async def test_without_transfer_the_prompt_and_tool_give_the_reason_and_a_callback(monkeypatch, call_rows, now, reason):

@@ -80,11 +80,9 @@ def load_transcript(path) -> list[tuple[str, str, int]]:
 
 
 # a real customer's call: kept out of git (.superpowers/sdd is ignored), so these tests skip on a clean checkout
-ORLA = Path(__file__).resolve().parents[1] / ".superpowers" / "sdd" / "discovery" / "orla-transcript.txt"
-NEEDS_ORLA = pytest.mark.skipif(not ORLA.exists(), reason="needs the call 22 transcript")
+ORLA = Path(__file__).parent / "fixtures" / "call22-orla.txt"  # the user's own rehearsal call, test-lead names
 
 
-@NEEDS_ORLA
 def test_orla_transcript_loads():
     lines = load_transcript(ORLA)
     assert lines[0] == ("customer", "No.", 8) and ("customer", "Five", 138) in lines
@@ -343,7 +341,6 @@ async def test_interested_lead_is_in_the_inbox_before_the_model_answers(call_row
     assert len(analyses) == 1 and len(tasks) == 1
 
 
-@NEEDS_ORLA
 @pytest.mark.skipif(not os.getenv("LIVEKIT_API_KEY"), reason="needs LiveKit Cloud credentials for inference")
 @pytest.mark.asyncio
 async def test_real_model_scores_the_orla_call(call_rows, test_db):

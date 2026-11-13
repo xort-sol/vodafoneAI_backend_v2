@@ -199,7 +199,7 @@ async def analyse_call(job_id: str, lines: list[tuple[str, str, int]], outcome: 
         if parsed is None:
             logger.error("analysis for job %s did not match the schema: %.300s", job_id, reply)
         else:
-            s = score(parsed["discovery"], outcome)
+            s = score(parsed["discovery"], outcome, datetime.now(db.IRELAND).date())  # same Irish day as the prompt
             # set only once scored, so a scoring error can't break the save below
             analysis = parsed | {"qualification": s["criteria"], "score": s["total"], "classification": s["classification"]}
     except Exception as e:
