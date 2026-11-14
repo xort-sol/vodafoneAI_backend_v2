@@ -16,6 +16,7 @@ from livekit.agents import (AMD, Agent, AgentServer, AgentSession, JobProcess, R
                             function_tool, get_job_context, inference, llm)
 from livekit.agents.beta.tools import EndCallTool
 from livekit.agents.beta.workflows import WarmTransferTask
+from livekit.agents.voice.amd.classifier import AMD_PROMPT
 from livekit.plugins import elevenlabs, silero
 
 from analysis import analyse
@@ -457,10 +458,18 @@ def build_session(vad, voice_id: str | None = None) -> AgentSession:
     )
 
 
+# The agent stays silent until AMD decides: a first "Hello" misheard as "No." was judged ambiguous and held it ~9 s
+SHORT_REPLY_IS_HUMAN = """
+
+A person answering the phone usually says one or two words first, and the line often mishears them.
+Any short reply of a few words, such as "hello", "hi", "yes", "no", "speaking", "go ahead", a name or a business name,
+is human: never uncertain, and never wait for more audio. Voicemail and IVR greetings are full sentences."""
+
+
 def build_amd(session: AgentSession, identity: str) -> AMD:
     # AMD's default STT (cartesia/ink-whisper) isn't served in LiveKit's EU region; reuse the session's model
     # a silent pick-up would otherwise hear ten seconds of nothing before the agent speaks
-    return AMD(session, participant_identity=identity, stt=session.stt, detection_options={"no_speech_threshold": 4.0})
+    return AMD(session, participant_identity=identity, stt=session.stt, detection_options={"no_speech_threshold": 4.0, "prompt": AMD_PROMPT + SHORT_REPLY_IS_HUMAN})
 
 
 def prewarm(proc: JobProcess) -> None:
@@ -537,6 +546,7 @@ async def sales_call(ctx: agents.JobContext):
         await ctx.wait_for_participant(identity=identity)
         agent.reached = True
         result = await detector.execute()
+        logger.info("voicemail detection: %s (%s) after %.1fs, heard %r", result.category, result.reason, result.delay, result.transcript)
 
     # machine-ivr is navigated automatically by AMD; human/uncertain continue as a normal conversation
     if result.category == "machine-vm":

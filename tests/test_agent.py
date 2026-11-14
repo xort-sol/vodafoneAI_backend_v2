@@ -480,6 +480,14 @@ async def test_voicemail_detector_uses_the_sessions_eu_speech_model():
     assert agent_module.build_amd(session, "sip-+1")._stt.model == "deepgram/nova-3"
 
 
+def test_voicemail_detector_treats_a_short_first_reply_as_a_person():
+    # a first "Hello" heard as "No." made the detector wait up to 10 s for more audio, with the agent held silent
+    from types import SimpleNamespace
+    amd = agent_module.build_amd(SimpleNamespace(stt=None), "sip-+1")
+    prompt = amd._opts["prompt"]
+    assert prompt.startswith(agent_module.AMD_PROMPT) and '"no"' in prompt and "never uncertain" in prompt
+
+
 def test_job_gets_time_to_save_and_analyse_after_hang_up():
     # LiveKit's default is 10 s; hang-up can spend 30 s on the analysis
     assert agent_module.server._shutdown_process_timeout >= 60
