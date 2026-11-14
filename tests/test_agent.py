@@ -801,6 +801,14 @@ async def test_out_of_hours_the_prompt_offers_no_transfer_and_the_tool_refuses(c
 
 
 @pytest.mark.asyncio
+async def test_the_test_switch_allows_a_transfer_out_of_hours(call_rows, transfer, monkeypatch):
+    monkeypatch.setattr(agent_module, "ireland_now", lambda: datetime(2037, 11, 7, 11, 0, tzinfo=agent_module.IRELAND))
+    monkeypatch.setattr(agent_module, "TRANSFER_ANY_TIME", True)
+    agent = SalesAgent(JOB_LEAD, phone_mode=True)
+    assert "transfer_to_specialist" in agent.instructions and agent.can_transfer
+
+
+@pytest.mark.asyncio
 async def test_a_failed_transfer_is_never_tried_again(call_rows, transfer):
     async def fails():
         raise agent_module.ToolError("could not dial human agent")

@@ -68,6 +68,7 @@ If the specialist doesn't answer or declines, the agent apologises and books a c
 
 - Locally: set `SALES_SPECIALIST_PHONE=+353...` in `.env` (E.164, through the same `SIP_OUTBOUND_TRUNK_ID`).
 - Deployed: `lk agent update-secrets --secrets SALES_SPECIALIST_PHONE=+353...` (restarts the agent; the code must be deployed first).
+- Transfers are only offered Monday to Friday, 9:00 to 17:30 Irish time. To test out of hours, set `TRANSFER_ANY_TIME=1` (deployed: `lk agent update-secrets --secrets TRANSFER_ANY_TIME=1`) and clear it afterwards.
 - Not set, or not a valid E.164 number: transfer is off and the agent never offers it. It is also never offered without a phone line (console, web tester).
 
 ## Database changes

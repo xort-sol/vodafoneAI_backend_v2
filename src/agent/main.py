@@ -52,6 +52,8 @@ def specialist_phone(value: str) -> str:
 
 # Only ever from env, never from the model
 SALES_SPECIALIST_PHONE = specialist_phone(os.getenv("SALES_SPECIALIST_PHONE", ""))
+# shortcut: test-only switch so transfers can be tried out of hours; unset it after testing
+TRANSFER_ANY_TIME = os.getenv("TRANSFER_ANY_TIME") == "1"
 TRANSFER_TIMEOUT_S = 180  # ringing (25 s) plus a long briefing; past this the customer has waited on hold too long
 TRANSFER_FAILED = 'Tell them "the specialist couldn\'t take the call just now", apologise and offer a callback.'
 
@@ -144,9 +146,10 @@ class SalesAgent(Agent):
         self.transferring = False  # set from dialling the specialist onwards: the AI must never speak over them
         self.transfer_failed = False
         now = ireland_now()
-        self.can_transfer = can_transfer = bool(SALES_SPECIALIST_PHONE and phone_mode and in_working_hours(now))
+        open_now = TRANSFER_ANY_TIME or in_working_hours(now)
+        self.can_transfer = can_transfer = bool(SALES_SPECIALIST_PHONE and phone_mode and open_now)
         # said to the customer when they ask to be put through and can't be: never the configuration
-        self.no_transfer = ("our specialists have finished for today, they take calls Monday to Friday, nine to half five" if not in_working_hours(now)
+        self.no_transfer = ("our specialists have finished for today, they take calls Monday to Friday, nine to half five" if not open_now
                             else "I can't connect calls from this line")
         self.recorded = False
         self.started_at = time.time()  # wall clock, to date each transcript line
