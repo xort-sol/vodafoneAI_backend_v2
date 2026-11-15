@@ -429,9 +429,11 @@ class SilenceTracker:
         self.silences = 0
 
 
-def should_open_call(category: str, transcript: str) -> bool:
-    # If the callee spoke ("Hello?"), the session already replies to that turn
-    return category == "uncertain" and not transcript
+def greet_first(session: AgentSession):
+    # A caller speaks first; AMD keeps listening and its interrupt_on_machine cuts the greeting off on a voicemail
+    # shortcut: AMD has no public switch to stop holding speech (livekit-agents 1.8.9), recheck on upgrade
+    session._activity._resume_authorization()
+    return session.generate_reply(instructions="Open the call.")
 
 
 def build_session(vad, voice_id: str | None = None) -> AgentSession:
@@ -458,7 +460,7 @@ def build_session(vad, voice_id: str | None = None) -> AgentSession:
     )
 
 
-# The agent stays silent until AMD decides: a first "Hello" misheard as "No." was judged ambiguous and held it ~9 s
+# A first "Hello" misheard as "No." was judged ambiguous, delaying the voicemail verdict ~9 s
 SHORT_REPLY_IS_HUMAN = """
 
 A person answering the phone usually says one or two words first, and the line often mishears them.
@@ -545,6 +547,7 @@ async def sales_call(ctx: agents.JobContext):
             return
         await ctx.wait_for_participant(identity=identity)
         agent.reached = True
+        greet_first(session)
         result = await detector.execute()
         logger.info("voicemail detection: %s (%s) after %.1fs, heard %r", result.category, result.reason, result.delay, result.transcript)
 
@@ -561,8 +564,6 @@ async def sales_call(ctx: agents.JobContext):
     elif result.category == "machine-unavailable":
         await agent.save("unreachable", notes=result.transcript)
         ctx.shutdown("mailbox unavailable")
-    elif should_open_call(result.category, result.transcript):
-        await session.generate_reply(instructions="The customer answered but is silent. Open the call.")
 
 
 if __name__ == "__main__":

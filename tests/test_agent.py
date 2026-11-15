@@ -6,6 +6,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import psycopg
 import pytest
@@ -208,13 +209,13 @@ async def test_hang_up_recorded_only_after_customer_reached(call_rows):
     assert [r["outcome"] for r in call_rows()] == ["hung_up"]
 
 
-@pytest.mark.parametrize(
-    "category,transcript,expected",
-    [("human", "Hello?", False), ("uncertain", "Hello, who is this?", False), ("uncertain", "", True)],
-)
-def test_agent_opens_only_when_callee_is_silent(category, transcript, expected):
-    # when the callee spoke, the session already replies to that turn
-    assert agent_module.should_open_call(category, transcript) is expected
+def test_agent_greets_as_soon_as_the_call_is_answered():
+    # AMD holds all speech until its verdict; the agent must speak first and leave AMD to cut it off on a machine
+    calls = []
+    activity = SimpleNamespace(_resume_authorization=lambda: calls.append("resume"))
+    session = SimpleNamespace(_activity=activity, generate_reply=lambda **kw: calls.append(kw) or "handle")
+    assert agent_module.greet_first(session) == "handle"
+    assert calls == ["resume", {"instructions": "Open the call."}]
 
 
 @pytest.mark.skipif(not os.getenv("LIVEKIT_API_KEY"), reason="needs LiveKit Cloud credentials for inference")
@@ -482,7 +483,6 @@ async def test_voicemail_detector_uses_the_sessions_eu_speech_model():
 
 def test_voicemail_detector_treats_a_short_first_reply_as_a_person():
     # a first "Hello" heard as "No." made the detector wait up to 10 s for more audio, with the agent held silent
-    from types import SimpleNamespace
     amd = agent_module.build_amd(SimpleNamespace(stt=None), "sip-+1")
     prompt = amd._opts["prompt"]
     assert prompt.startswith(agent_module.AMD_PROMPT) and '"no"' in prompt and "never uncertain" in prompt
