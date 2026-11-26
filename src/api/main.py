@@ -25,9 +25,9 @@ logger = logging.getLogger("api")
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")],
+    allow_origins=[o.strip() for o in os.getenv("FRONTEND_ORIGIN", "http://localhost:5173").split(",") if o.strip()],  # comma-separated
     allow_methods=["GET", "POST"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "ngrok-skip-browser-warning"],
 )
 CALL_ROOM = re.compile(r"^call-")
 PHONE = re.compile(r"^call-(\d+)-\d+$")  # the dialler's naming, see dialler.main

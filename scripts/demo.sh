@@ -15,6 +15,10 @@ uv run uvicorn api.main:app --port 8000 &
 api=$!
 uv run python -m dialler.main --every 5 &
 dialler=$!
+if [ -n "${NGROK_DOMAIN:-}" ]; then  # the public HTTPS address the Vercel frontend calls (VITE_API_URL)
+  ngrok http --url="$NGROK_DOMAIN" 8000 --log=stderr --log-level=warn &
+  echo "API is public at https://$NGROK_DOMAIN" >&2
+fi
 while kill -0 "$api" 2>/dev/null && kill -0 "$dialler" 2>/dev/null; do  # bash 3.2 on macOS has no wait -n
   sleep 1
 done
