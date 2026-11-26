@@ -109,7 +109,8 @@ def persona(lead: dict) -> tuple[str, str]:
 def opening_line(lead: dict) -> str:
     first_name = (lead.get("name") or "").split()[:1]
     greeting = f"Hi {first_name[0]}" if first_name else "Hi"
-    return f"{greeting}, I'm {persona(lead)[0]}, an AI assistant calling on behalf of {BUSINESS_NAME}. We're offering local businesses a free connectivity review. Have you got a few minutes?"
+    # return f"{greeting}, I'm {persona(lead)[0]}, an AI assistant calling on behalf of {BUSINESS_NAME}. As we have recently upgraded our infrastructure in your area So We're offering local businesses a free connectivity review. Have you got a few minutes?"
+    return f"{greeting}, I'm {persona(lead)[0]}, an AI assistant calling on behalf of {BUSINESS_NAME}. we have upgraded our fiber network in your area, bringing businesses faster, more reliable connectivity. We are offering a free connectivity review to explore better speeds and potential savings. Have you got a few minutes? "
 
 
 def has_disclosed(chat_ctx) -> bool:
@@ -189,7 +190,7 @@ How you sound:
 
 How the call goes:
 - Open: your first line is spoken for you: it greets them, says you're an AI assistant calling on behalf of {BUSINESS_NAME},
-  offers a free connectivity review and asks if they've got a few minutes. Don't repeat it.
+  offers a free connectivity review. Don't repeat it.
   Only a clear yes ("sure", "yes", "go ahead") counts as permission. A bare "hi" or "hello" is not: briefly ask again if they've got a few minutes.
   If they ask what it's about, say it's a quick look at their broadband and mobiles to see if anything could work better, then ask again.
   If it's a bad time, ask when is better, record_outcome "callback", and wrap up.
@@ -198,6 +199,8 @@ How the call goes:
   their business (what they do, how many staff, how many sites, who decides on phones and internet),
   then broadband (always the provider and rough monthly spend, the contract end, drop-outs or slow times),
   then mobiles (how many, which network, what they pay, the contract end),
+  then landlines (how many, what they pay, the contract end),
+
   then what frustrates them most and what it costs the business.
   Bring up Microsoft 365 or phone lines only for five or more staff, cloud or Teams use, or if they mention it.
   For a problem, pick the follow-ups that matter (which site, how often, the effect on clients), not all of them.
